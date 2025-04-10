@@ -1,8 +1,10 @@
 ---
 name: Research Report
+about: Research report
 title: "[Research]: "
 labels: documentation
 assignees: ''
+
 ---
 
 **Describe the Research** 
@@ -14,8 +16,3 @@ assignees: ''
 
 
 **Expected outcome:**
-
-
-
-
-
