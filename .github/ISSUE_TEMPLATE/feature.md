@@ -1,5 +1,6 @@
 ---
 name: Feature Report
+about: Feature report
 title: "[Feature]: "
 labels: enhancement
 assignees: ''
