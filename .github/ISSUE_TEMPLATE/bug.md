@@ -1,5 +1,6 @@
 ---
 name: Bug Report
+about: Bug report
 title: "[Bug]: "
 labels: bug
 assignees: ''
