@@ -1,41 +1,26 @@
-import argparse
-from datetime import datetime
-import time
-import functools
-import json
 import os
-from typing import Any
-from etils import epath
-from absl import app
-from absl import flags
-from absl import logging
-
-import hydra
-from hydra.core.config_store import ConfigStore
-
-from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
-
-cs = ConfigStore.instance()
-cs.store(name="train_config", node=PPOConfig)
 
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-# Ignore the info logs from brax
-logging.set_verbosity(logging.WARNING)
-
-# Suppress RuntimeWarnings from JAX
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="jax")
-# Suppress DeprecationWarnings from JAX
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
-# Suppress UserWarnings from absl (used by JAX and TensorFlow)
-warnings.filterwarnings("ignore", category=UserWarning, module="absl")
-
-import jax
+import time
+import json
+import hydra
 import warnings
-#For now, I'm using the brax library to load the environment
+import argparse
+import functools
+from typing import Any
+from etils import epath
+from absl import app
+from absl import flags
+from absl import logging
+
+from datetime import datetime
+from hydra.core.config_store import ConfigStore
+# from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
+
 from brax import base
 from brax import envs
 from brax import math
@@ -53,20 +38,15 @@ from flax.training import orbax_utils
 
 import wandb
 
-env = envs.get_environment('humanoid')
-eval_env = envs.get_environment('humanoid')
-checkpoint = None
-# robot = Robot(args.robot)
+from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
 
-#train_cfg = ?
-#env = 
-#eval_env = 
+cs = ConfigStore.instance()
+cs.store(name="train_config", node=PPOConfig)
 
-now = datetime.now()
-timestamp = now.strftime("%Y%m%d-%H%M%S")
-run_name = f"humanoid-{timestamp}"
 
-checkpoint_path = None
+
+# Ignore the info logs from brax
+logging.set_verbosity(logging.WARNING)
 
 # Suppress warnings
 
@@ -77,9 +57,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 # Suppress UserWarnings from absl (used by JAX and TensorFlow)
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
-@hydra.main(config_path=None, config_name="train_config")
 def train(
-    train_cfg: PPOConfig,
+    env,
+    eval_env,
+    train_cfg,
+    run_name: str,
+    checkpoint_path: str,
 ):  
     """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
     
@@ -191,8 +174,8 @@ def train(
     print(f"best episode reward: {best_episode_reward}")
 
 
-
-if __name__ == "__main__":
+@hydra.main(config_path=None, config_name="train_config")
+def main(train_cfg):
     parser = argparse.ArgumentParser(description="Train a policy using mjx")
     parser.add_argument(
         "--robot",
@@ -211,19 +194,22 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    # env = envs.get_environment(args.env)
-    # eval_env = envs.get_environment(args.env)
-    # robot = Robot(args.robot)
-
-    #train_cfg = ?
-    #env = 
-    #eval_env = 
+    
+    env = envs.get_environment("humanoid")
+    eval_env = envs.get_environment("humanoid")
 
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d-%H%M%S")
-    experiment_name = f"{args.env}-{timestamp}"
+    experiment_name = f"humanoid-{timestamp}"
     print(f"Experiment name: {experiment_name}")
 
-
     train(
+        env=env,
+        eval_env=eval_env,
+        train_cfg=train_cfg,
+        run_name=experiment_name,
+        checkpoint_path=args.checkpoint
     )
+
+if __name__ == "__main__":
+    main()
