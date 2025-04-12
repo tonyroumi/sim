@@ -3,24 +3,23 @@ from typing import Tuple
 
 @dataclass
 class PPOConfig:
-    """Data class for storing PPO hyperparameters."""
-    num_timesteps: int
-    num_evals: int
-    episode_length: int
-    unroll_length: int
-    num_minibatches: int
-    num_updates_per_batch: int
-    discounting: float
-    learning_rate: float
-    entropy_cost: float
-    clipping_epsilon: float
-    num_envs: int
-    batch_size: int
-    seed: int
-    render_interval: int
-    normalize_observations: bool
-    action_repeat: float
-    max_grad_norm: float
-    policy_hidden_layer_sizes: Tuple[int, ...]
-    value_hidden_layer_sizes: Tuple[int, ...]
-    num_resets_per_eval: int
+    num_timesteps: int = 100_000_000
+    num_evals: int = 1000
+    episode_length: int = 1000
+    unroll_length: int = 20
+    num_minibatches: int = 4
+    num_updates_per_batch: int = 4
+    discounting: float = 0.97
+    learning_rate: float = 1e-4
+    entropy_cost: float = 5e-4
+    clipping_epsilon: float = 0.2
+    num_envs: int = 1024
+    batch_size: int = 256
+    seed: int = 42
+    render_interval: int = 50
+    normalize_observations: bool = True
+    action_repeat: float = 1.0
+    max_grad_norm: float = 1.0
+    policy_hidden_layer_sizes: Tuple[int, ...] = (512, 256, 128)
+    value_hidden_layer_sizes: Tuple[int, ...] = (512, 256, 128)
+    num_resets_per_eval: int = 1

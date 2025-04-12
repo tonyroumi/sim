@@ -1,10 +1,14 @@
 import argparse
-from datetime import datetime, time
+from datetime import datetime
+import time
 import functools
 import json
 import os
 from typing import Any
 from etils import epath
+from absl import app
+from absl import flags
+from absl import logging
 
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -14,8 +18,23 @@ from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
 cs = ConfigStore.instance()
 cs.store(name="train_config", node=PPOConfig)
 
-import jax
+xla_flags = os.environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
+# Ignore the info logs from brax
+logging.set_verbosity(logging.WARNING)
+
+# Suppress RuntimeWarnings from JAX
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="jax")
+# Suppress DeprecationWarnings from JAX
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
+# Suppress UserWarnings from absl (used by JAX and TensorFlow)
+warnings.filterwarnings("ignore", category=UserWarning, module="absl")
+
+import jax
+import warnings
 #For now, I'm using the brax library to load the environment
 from brax import base
 from brax import envs
@@ -28,36 +47,57 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.io import html, mjcf, model
 
-
+from omegaconf import OmegaConf
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
 
 import wandb
 
+env = envs.get_environment('humanoid')
+eval_env = envs.get_environment('humanoid')
+checkpoint = None
+# robot = Robot(args.robot)
+
+#train_cfg = ?
+#env = 
+#eval_env = 
+
+now = datetime.now()
+timestamp = now.strftime("%Y%m%d-%H%M%S")
+run_name = f"humanoid-{timestamp}"
+
+checkpoint_path = None
+
+# Suppress warnings
+
+# Suppress RuntimeWarnings from JAX
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="jax")
+# Suppress DeprecationWarnings from JAX
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
+# Suppress UserWarnings from absl (used by JAX and TensorFlow)
+warnings.filterwarnings("ignore", category=UserWarning, module="absl")
+
 @hydra.main(config_path=None, config_name="train_config")
 def train(
-    cfg: PPOConfig,
-    env = None,
-    eval_env = None,
-    train_cfg = None,
-    run_name = None,
-    checkpoint_path: str = None,
-):
+    train_cfg: PPOConfig,
+):  
     """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
     
     This function sets up the training environment, initializes configurations, and manages the training process.
     """
+    
 
     #Change this to the hydra logging directory eventually
-    logdir = epath.Path("logs").resolve() / experiment_name
+    logdir = epath.Path("logs").resolve() / run_name
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
 
     wandb.init(
         project="MJX_RL",
         name=run_name,
-        config=train_cfg.to_dict()
+        config=OmegaConf.to_container(train_cfg)
     )
+    checkpoint = None
 
     if checkpoint is not None:
         checkpoint = epath.Path(checkpoint).resolve()
@@ -72,7 +112,7 @@ def train(
 
     #Save environment configuration
     with open(ckpt_path / "config.json", "w") as f:
-        json.dump(dict(cfg), f, indent=4)
+        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
 
 
     def policy_params_fn(current_step: int, make_policy: Any, params: Any):
@@ -88,6 +128,11 @@ def train(
     domain_randomize_fn = None
     #add domain randomization
     #can choose to randomize body mass, friction, sim and robot parameters
+    make_networks_factory = functools.partial(
+        ppo_networks.make_ppo_networks,
+        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
+        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
+    )
 
     train_fn = functools.partial(
         ppo.train,
@@ -106,10 +151,8 @@ def train(
         seed=train_cfg.seed,
         network_factory=make_networks_factory,
         randomization_fn=domain_randomize_fn,
-        render_interval=train_cfg.render_interval,
         policy_params_fn=policy_params_fn,
         restore_checkpoint_path=checkpoint_path,
-        run_name=run_name,
     )
 
     times = [time.time()]
@@ -132,8 +175,14 @@ def train(
             best_episode_reward = episode_reward
             best_ckpt_step = num_steps
         
-        metrics_str = ", ".join([f"{k}={v:.3f}" for k, v in metrics.items()])
-        print(f"{num_steps}: {metrics_str}")
+        print(f"{num_steps}: {metrics['eval/episode_reward']}")
+    
+    try:
+        _, params, _ = train_fn(
+            environment=env, eval_env=eval_env, progress_fn=progress
+        )
+    except KeyboardInterrupt:
+        pass
 
 
     print(f"time to jit: {times[1] - times[0]}")
@@ -153,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         type=str,
-        help="The name of the environment"
+        help="The name of the environment",
     )
     parser.add_argument(
         "--checkpoint",
@@ -163,18 +212,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     # env = envs.get_environment(args.env)
-
+    # eval_env = envs.get_environment(args.env)
     # robot = Robot(args.robot)
 
     #train_cfg = ?
     #env = 
     #eval_env = 
-
-    # make_networks_factors = functools.partial(
-    #     ppo_networks.make_networks,
-    #     policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
-    #     value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
-    # )
 
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d-%H%M%S")
@@ -182,4 +225,5 @@ if __name__ == "__main__":
     print(f"Experiment name: {experiment_name}")
 
 
-    train()
+    train(
+    )
