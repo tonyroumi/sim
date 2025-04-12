@@ -6,6 +6,14 @@ import os
 from typing import Any
 from etils import epath
 
+import hydra
+from hydra.core.config_store import ConfigStore
+
+from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
+
+cs = ConfigStore.instance()
+cs.store(name="train_config", node=PPOConfig)
+
 import jax
 
 #For now, I'm using the brax library to load the environment
@@ -20,19 +28,20 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.io import html, mjcf, model
 
-import hydra
 
 from orbax import checkpoint as ocp
-from orbax.checkpoint import orbax_utils
+from flax.training import orbax_utils
+
 import wandb
 
-@hydra.main(config_path=None, config_name="config")
+@hydra.main(config_path=None, config_name="train_config")
 def train(
-        env,
-        eval_env = None,
-        train_cfg = None,
-        run_name = None,
-        checkpoint_path: str = None,
+    cfg: PPOConfig,
+    env = None,
+    eval_env = None,
+    train_cfg = None,
+    run_name = None,
+    checkpoint_path: str = None,
 ):
     """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
     
@@ -63,7 +72,7 @@ def train(
 
     #Save environment configuration
     with open(ckpt_path / "config.json", "w") as f:
-        json.dump(train_cfg.to_dict(), f, indent=4)
+        json.dump(dict(cfg), f, indent=4)
 
 
     def policy_params_fn(current_step: int, make_policy: Any, params: Any):
@@ -153,9 +162,9 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    env = envs.get_environment(args.env)
+    # env = envs.get_environment(args.env)
 
-    robot = Robot(args.robot)
+    # robot = Robot(args.robot)
 
     #train_cfg = ?
     #env = 
@@ -173,4 +182,4 @@ if __name__ == "__main__":
     print(f"Experiment name: {experiment_name}")
 
 
-    train(env, eval_env, train_cfg, experiment_name)
+    train()
