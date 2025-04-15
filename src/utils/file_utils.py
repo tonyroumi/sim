@@ -1,4 +1,6 @@
 import os
+project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def find_robot_file_path(robot_name: str, scene: str, suffix: str = ".urdf") -> str:
     """
@@ -21,9 +23,9 @@ def find_robot_file_path(robot_name: str, scene: str, suffix: str = ".urdf") -> 
         print(robot_urdf_path)
     """
    
-    robot_dir = os.path.join("src", "robots", robot_name)
+    robot_dir = os.path.join(project_dir, "robots", robot_name)
     if os.path.exists(robot_dir):
-        file_path = os.path.join(robot_dir, robot_name + '_' + scene + 'scene' + suffix)
+        file_path = os.path.join(robot_dir, robot_name + '_' + scene + '_scene' + suffix)
         if os.path.exists(file_path):
             return file_path
 
