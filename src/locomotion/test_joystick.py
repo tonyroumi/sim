@@ -31,10 +31,10 @@ def main():
         print("Initializing environment (no jit)...")
         state = env.reset(rng)
         print("\nInitial Position:")
-        print(state.q)  
+    
 
         # Random action
-        action = jnp.zeros(env.env.action_size)
+        action = jnp.zeros(env.nu)
         state = env.step(state, action)
 
         print("\nPost-Step Position:")

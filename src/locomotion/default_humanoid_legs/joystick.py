@@ -74,24 +74,37 @@ class Joystick(PipelineEnv):
         # self.motor_limits = jp.array(
         #     [self.robot.joint_limits[name] for name in self.robot.motor_ordering]
         # )
+        # noise
+        
+        self.obs_noise_scale = self.cfg.noise.obs_noise_scale * jp.concatenate(
+            [
+                jp.ones(3) * self.cfg.noise.lin_vel,
+                jp.ones(3) * self.cfg.noise.ang_vel,
+                jp.ones(3) * self.cfg.noise.euler,
+                jp.zeros(self.action_size) * self.cfg.noise.motor_pos,
+                jp.ones(self.action_size) * self.cfg.noise.motor_vel,
+                jp.zeros(4),
+                jp.zeros(3),
+                jp.zeros(self.action_size)
+            ]
+        )
 
         self.lin_vel_x = self.cfg.domain_rand.lin_vel_x
         self.lin_vel_y = self.cfg.domain_rand.lin_vel_y
         self.ang_vel_yaw = self.cfg.domain_rand.ang_vel_yaw
 
+        #observation
         self.num_obs_history = self.cfg.obs.frame_stack
         self.num_privileged_obs_history = self.cfg.obs.c_frame_stack
         self.obs_size = self.cfg.obs.num_single_obs
         self.privileged_obs_size = self.cfg.obs.num_single_privileged_obs
+        self.obs_scales = self.cfg.obs_scales
 
         self.resample_time = self.cfg.commands.resample_time
         self.resample_steps = int(self.resample_time / self.dt)
         self.reset_time = self.cfg.commands.reset_time
         self.reset_steps = int(self.reset_time / self.dt)
 
-
-        
-    
 
     def _init_reward(self) -> None:
         """Initializes the reward system by filtering and scaling reward components.
@@ -126,6 +139,7 @@ class Joystick(PipelineEnv):
 
         state_info = {
             "rng": rng,
+            "last_contact": jp.zeros(4),
             # "contact_forces": jp.zeros((self.num_colliders, self.num_colliders, 3)),
             # "left_foot_contact_mask": jp.zeros(len(self.left_foot_collider_indices)),
             # "right_foot_contact_mask": jp.zeros(len(self.right_foot_collider_indices)),
@@ -138,7 +152,7 @@ class Joystick(PipelineEnv):
             "step": 0,
         }
 
-        qpos = self.default_pose.copy() 
+        qpos = self.init_q.copy() 
         qvel = jp.zeros(self.nv)
 
         #Here we can include some randomizations like joint positions, velocities of base, and position of base and orientation.
@@ -165,7 +179,7 @@ class Joystick(PipelineEnv):
             self.num_privileged_obs_history * self.privileged_obs_size
         )
 
-        obs, privileged_obs = self._get_obs(
+        obs = self._get_obs(
             pipeline_state,
             state_info,
             obs_history,
@@ -175,11 +189,11 @@ class Joystick(PipelineEnv):
         reward, done, zero = jp.zeros(3)
 
         metrics = {}
-        for k in self.reward_names:
-            metrics[f"reward/{k}"] = zero
+        # for k in self.reward_names:
+        #     metrics[f"reward/{k}"] = zero
         
         return State(
-            pipeline_state, obs, privileged_obs, reward, done, metrics, state_info
+            pipeline_state, obs, reward, done, metrics, state_info
         )
 
     def step(self, state: State, action: jp.ndarray) -> State:
@@ -191,17 +205,19 @@ class Joystick(PipelineEnv):
         # apply a push if desired
         motor_targets = self.default_pose + action * self.cfg.action.action_scale
 
-        motor_targets = jp.clip(
-            motor_targets, self.motor_limits[:, 0], self.motor_limits[:, 1]
-        )
+        # motor_targets = jp.clip(
+        #     motor_targets, self.motor_limits[:, 0], self.motor_limits[:, 1]
+        # )
 
-        pipeline_state = self.pipeline_step(state, motor_targets)
+        pipeline_state = self.pipeline_step(state.pipeline_state, motor_targets)
 
         if self.add_domain_rand:
             # add rand
             pass
 
-        self.info["motor_targets"] = motor_targets
+        # self.info["motor_targets"] = motor_targets
+
+        #resume here
 
         contact_forces, left_foot_contact_mask, right_foot_contact_mask = (
                 self._get_contact_forces(pipeline_state)
@@ -215,8 +231,8 @@ class Joystick(PipelineEnv):
         state.info["right_foot_contact_mask"] = right_foot_contact_mask
         state.info["stance_mask"] = stance_mask
 
-        torso_height = pipeline_state.x.pos[0, 1] #not sure what this should be add debug
-        #IMPORTANT
+        torso_height = pipeline_state.x.pos[0, 2] 
+        
 
         done = jp.logical_or(
             torso_height < self.healthy_z_range[0],
@@ -224,7 +240,7 @@ class Joystick(PipelineEnv):
         )
         state.info["done"] = done
 
-        obs, privileged_obs = self._get_obs(
+        obs = self._get_obs(
             pipeline_state,
             state.info,
             state.obs_history,
@@ -269,7 +285,6 @@ class Joystick(PipelineEnv):
         return state.replace(
             pipeline_state = pipeline_state,
             obs = obs,
-            privileged_obs = privileged_obs,
             reward = reward,
             done = done.astype(jp.float32),
         )
@@ -312,8 +327,8 @@ class Joystick(PipelineEnv):
             torso_lin_vel * self.obs_scales.lin_vel,
             torso_ang_vel * self.obs_scales.ang_vel,
             torso_euler * self.obs_scales.euler,
-            motor_pos_delta, * self.obs_scales.motor_pos,
-            motor_vel, * self.obs_scales.motor_vel,
+            motor_pos_delta * self.obs_scales.motor_pos,
+            motor_vel * self.obs_scales.motor_vel,
             phase,
             info["command"],
             info["last_act"],
@@ -324,10 +339,10 @@ class Joystick(PipelineEnv):
             torso_lin_vel * self.obs_scales.lin_vel,
             torso_ang_vel * self.obs_scales.ang_vel,
             torso_euler * self.obs_scales.euler,
-            motor_pos_delta, * self.obs_scales.motor_pos,
-            motor_vel, * self.obs_scales.motor_vel,
+            motor_pos_delta * self.obs_scales.motor_pos,
+            motor_vel * self.obs_scales.motor_vel,
             phase,
-            info["contact"],
+            info["last_contact"],
             info["command"],
             info["last_act"],
         ])
@@ -346,7 +361,10 @@ class Joystick(PipelineEnv):
         )
         
 
-        return obs, privileged_obs
+        return {
+            "state": obs, 
+            "privileged_state": privileged_obs
+        }
     
     def _compute_reward(
         self, pipeline_state: base.State, info: dict[str, Any], action: jax.Array
