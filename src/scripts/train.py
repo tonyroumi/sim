@@ -1,5 +1,7 @@
 import os
 
+from src.locomotion import get_env_class
+
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -19,6 +21,7 @@ from absl import logging
 
 from datetime import datetime
 from hydra.core.config_store import ConfigStore
+from src.config import Config
 # from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
 
 from brax import base
@@ -36,14 +39,9 @@ from omegaconf import OmegaConf
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
 
+from src.robots.robot import Robot
+
 import wandb
-
-from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
-
-cs = ConfigStore.instance()
-cs.store(name="train_config", node=PPOConfig)
-
-
 
 # Ignore the info logs from brax
 logging.set_verbosity(logging.WARNING)
@@ -62,7 +60,7 @@ def train(
     eval_env,
     train_cfg,
     run_name: str,
-    checkpoint_path: str,
+    checkpoint_path: str = None,
 ):  
     """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
     
@@ -138,6 +136,7 @@ def train(
         restore_checkpoint_path=checkpoint_path,
     )
 
+
     times = [time.time()]
     
     last_ckpt_step = 0
@@ -174,33 +173,31 @@ def train(
     print(f"best episode reward: {best_episode_reward}")
 
 
-@hydra.main(config_path=None, config_name="train_config")
-def main(train_cfg):
-    parser = argparse.ArgumentParser(description="Train a policy using mjx")
-    parser.add_argument(
-        "--robot",
-        type=str,
-        help="The name of the robot. Must match the name in robots"
-    )
-    parser.add_argument(
-        "--env",
-        type=str,
-        help="The name of the environment",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        help="The path to the checkpoint"
-    )
+@hydra.main(config_path="../config", config_name="config")
+def main(cfg):
 
-    args = parser.parse_args()
+    robot = Robot(cfg.robot.name)
+
+    EnvClass = get_env_class(cfg.env.name)
+    env_cfg = cfg.sim
+    train_cfg = cfg.agent
+
     
-    env = envs.get_environment("humanoid")
-    eval_env = envs.get_environment("humanoid")
+    env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain, 
+        env_cfg)
+    
+    eval_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg)
 
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d-%H%M%S")
-    experiment_name = f"humanoid-{timestamp}"
+    experiment_name = f"{cfg.env.name}-{timestamp}"
     print(f"Experiment name: {experiment_name}")
 
     train(
@@ -208,7 +205,6 @@ def main(train_cfg):
         eval_env=eval_env,
         train_cfg=train_cfg,
         run_name=experiment_name,
-        checkpoint_path=args.checkpoint
     )
 
 if __name__ == "__main__":
