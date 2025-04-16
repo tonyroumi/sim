@@ -18,8 +18,16 @@ class MJXConfig:
     class ObsConfig:
         frame_stack: int = 15
         c_frame_stack: int = 15
-        num_single_obs: int = 0
-        num_single_privileged_obs: int = 0
+        num_single_obs: int = 52
+        num_single_privileged_obs: int = 69
+
+    @dataclass
+    class ObsScales:
+        lin_vel: float = 2.0
+        ang_vel: float = 1.0
+        motor_pos: float = 1.0
+        motor_vel: float = 0.05
+        euler: float = 1.0
 
     @dataclass
     class ActionConfig:
@@ -28,11 +36,17 @@ class MJXConfig:
 
     @dataclass
     class RewardConfig:
-        pass
+        healthy_z_range: Tuple[float, float] = (0.7, 1.5)
+        tracking_sigma: float = 0.5
 
     @dataclass
     class RewardScales:
-        pass
+        lin_vel: float = 1.0  
+        ang_vel: float = 1.0  
+        torques: float = 0.0
+        action_rate: float = 0.0
+        energy: float = -1e-2
+        survival: float = 10.0
 
     @dataclass
     class CommandsConfig:
@@ -49,17 +63,19 @@ class MJXConfig:
     @dataclass
     class NoiseConfig:
         add_noise: bool = True
-        motor_pos: float = 0.0
-        motor_vel: float = 0.0
-        lin_vel: float = 0.0
-        ang_vel: float = 0.0
-        euler: float = 0.0
-        pass
+        action_noise: float = 0.02
+        obs_noise_scale: float = 0.05
+        motor_pos: float = 1.0
+        motor_vel: float = 2.0
+        lin_vel: float = 3.0
+        ang_vel: float = 5.0
+        euler: float = 2.0
 
     sim: SimConfig = field(default_factory=SimConfig)
     obs: ObsConfig = field(default_factory=ObsConfig)
+    obs_scales: ObsScales = field(default_factory=ObsScales)
     action: ActionConfig = field(default_factory=ActionConfig)
-    reward: RewardConfig = field(default_factory=RewardConfig)
+    rewards: RewardConfig = field(default_factory=RewardConfig)
     reward_scales: RewardScales = field(default_factory=RewardScales)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     domain_rand: DomainRandConfig = field(default_factory=DomainRandConfig)
