@@ -70,6 +70,10 @@ def train(
     This function sets up the training environment, initializes configurations, and manages the training process.
     """
     
+
+    #Change this to the hydra logging directory eventually
+    logdir = epath.Path("logs").resolve() / run_name
+
     #Change this to the hydra logging directory eventually
     logdir = epath.Path("logs").resolve()
     logdir.mkdir(parents=True, exist_ok=True)
@@ -91,6 +95,14 @@ def train(
 
     ckpt_path = logdir / "checkpoints"
     ckpt_path.mkdir(parents=True, exist_ok=True)
+    print(f"Checkpoint path: {ckpt_path}")
+
+    #Save environment configuration
+    with open(ckpt_path / "config.json", "w") as f:
+        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
+
+
+
     print(f"Checkpoint path: {ckpt_path}")  
 
     #Save environment configuration
@@ -179,8 +191,6 @@ def train(
     print(f"best checkpoint step: {best_ckpt_step}")
     print(f"best episode reward: {best_episode_reward}")
 
-    #let's save a rollout here 
-
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg):
@@ -218,5 +228,4 @@ def main(cfg):
     )
 
 if __name__ == "__main__":
-    
     main()
