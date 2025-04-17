@@ -3,6 +3,7 @@ from typing import Any, Callable, List
 import jax
 import mujoco
 import numpy as np
+from omegaconf import OmegaConf
 import scipy
 from brax import base
 from brax.envs.base import PipelineEnv, State
@@ -105,7 +106,7 @@ class Joystick(PipelineEnv):
 
         This method processes the reward scales configuration by removing any components with a scale of zero and scaling the remaining components by a time factor. It then prepares a list of reward function names and their corresponding scales, which are stored for later use in reward computation. Additionally, it sets parameters related to health and tracking rewards.
         """
-        reward_scale_dict = asdict(self.cfg.reward_scales)
+        reward_scale_dict = OmegaConf.to_container(self.cfg.reward_scales)
         # Remove zero scales and multiply non-zero ones by dt
         for key in list(reward_scale_dict.keys()):
             if reward_scale_dict[key] == 0:
@@ -225,12 +226,6 @@ class Joystick(PipelineEnv):
         reward_dict = self._compute_reward(pipeline_state, state.info, action)
         reward = sum(reward_dict.values()) * self.dt
 
-
-        feet_z_delta = (
-            pipeline_state.x.pos[self.feet_link_ids, 2]
-            - state.info["feet_height_init"]
-        )
-
         phase_tp1 = state.info["phase"] + state.info["phase_dt"]
         state.info["phase"] = jp.fmod(phase_tp1 + jp.pi, 2 * jp.pi) - jp.pi
         state.info["last_last_act"] = state.info["last_act"].copy()
@@ -241,7 +236,7 @@ class Joystick(PipelineEnv):
 
         state.info["command"] = jax.lax.cond(
             state.info["step"] % self.resample_steps == 0,
-            lambda: self._sample_command(cmd_rng, state.info["command"]),
+            lambda: self.sample_command(cmd_rng),
             lambda: state.info["command"],
         )
 
@@ -249,7 +244,7 @@ class Joystick(PipelineEnv):
         state.info["step"] = jp.where(
             done | (state.info["step"] > self.reset_steps), 0, state.info["step"]
         )
-        state.metrics.update(reward_dict)
+        # state.metrics.update(reward_dict)
 
         return state.replace(
             pipeline_state = pipeline_state,
@@ -450,31 +445,39 @@ class Joystick(PipelineEnv):
         info: dict[str, Any],
         action: jax.Array,
     ) -> jax.Array:
-        #resume HERE
         ang_vel_local = rotate_vec(
             pipeline_state.xd.ang[0], quat_inv(pipeline_state.x.rot[0])
         )
         ang_vel_yaw = ang_vel_local[2]
-        error = jp.linalg.norm(ang_vel_yaw - info["command"][2], axis=-1)
+        error = jp.linalg.norm(ang_vel_yaw - info["command"][2])
         reward = jp.exp(-self.tracking_sigma / 4 * error**2)
         return reward
     
     
     # Energy related rewards.
-
-    def _cost_torques(self, torques: jax.Array) -> jax.Array:
-        return jp.sum(jp.abs(torques))
+    def _cost_torques(
+        self,
+        pipeline_state: base.State,
+        info: dict[str, Any],
+        action: jax.Array,
+    ) -> jax.Array:
+        return jp.sum(jp.abs(pipeline_state.actuator_force))
 
     def _cost_energy(
-        self, qvel: jax.Array, qfrc_actuator: jax.Array
+        self,
+        pipeline_state: base.State,
+        info: dict[str, Any],
+        action: jax.Array,
     ) -> jax.Array:
-        return jp.sum(jp.abs(qvel) * jp.abs(qfrc_actuator))
+        return jp.sum(jp.abs(pipeline_state.qvel) * jp.abs(pipeline_state.qfrc_actuator))
 
     def _cost_action_rate(
-        self, act: jax.Array, last_act: jax.Array, last_last_act: jax.Array
+        self,
+        pipeline_state: base.State,
+        info: dict[str, Any],
+        action: jax.Array,
     ) -> jax.Array:
-        del last_last_act  # Unused.
-        c1 = jp.sum(jp.square(act - last_act))
+        c1 = jp.sum(jp.square(action - info["last_act"]))
         return c1
     
     def _reward_survival(

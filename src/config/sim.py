@@ -41,8 +41,8 @@ class MJXConfig:
 
     @dataclass
     class RewardScales:
-        lin_vel: float = 1.0  
-        ang_vel: float = 1.0  
+        lin_vel_xy: float = 1.0  
+        ang_vel_yaw: float = 1.0  
         torques: float = 0.0
         action_rate: float = 0.0
         energy: float = -1e-2
