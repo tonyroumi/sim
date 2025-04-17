@@ -2,11 +2,6 @@ import os
 
 from src.locomotion import get_env_class
 
-xla_flags = os.environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
-os.environ["XLA_FLAGS"] = xla_flags
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-
 import time
 import json
 import hydra
@@ -21,6 +16,7 @@ from absl import logging
 
 from datetime import datetime
 from hydra.core.config_store import ConfigStore
+
 from src.config import Config
 # from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
 
@@ -43,6 +39,12 @@ from src.robots.robot import Robot
 
 import wandb
 
+xla_flags = os.environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["MUJOCO_GL"] = "egl"
+
 # Ignore the info logs from brax
 logging.set_verbosity(logging.WARNING)
 
@@ -56,6 +58,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
 def train(
+    robot,
     env,
     eval_env,
     train_cfg,
@@ -70,6 +73,9 @@ def train(
 
     #Change this to the hydra logging directory eventually
     logdir = epath.Path("logs").resolve() / run_name
+
+    #Change this to the hydra logging directory eventually
+    logdir = epath.Path("logs").resolve()
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
 
@@ -94,6 +100,19 @@ def train(
     #Save environment configuration
     with open(ckpt_path / "config.json", "w") as f:
         json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
+
+
+
+    print(f"Checkpoint path: {ckpt_path}")  
+
+    #Save environment configuration
+    with open(logdir / "train_config.json", "w") as f:
+        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
+
+
+    #Save robot configuration
+    with open(logdir / "robot_config.json", "w") as f:
+        json.dump(robot.config, f, indent=4)
 
 
     def policy_params_fn(current_step: int, make_policy: Any, params: Any):
@@ -201,6 +220,7 @@ def main(cfg):
     print(f"Experiment name: {experiment_name}")
 
     train(
+        robot=robot,
         env=env,
         eval_env=eval_env,
         train_cfg=train_cfg,
