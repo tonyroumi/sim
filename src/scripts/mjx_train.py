@@ -1,28 +1,18 @@
 import os
 
+import jax
+
 from src.locomotion import get_env_class
 
 import time
 import json
 import hydra
 import warnings
-import argparse
 import functools
 from typing import Any
 from etils import epath
-from absl import app
-from absl import flags
 from absl import logging
 
-from datetime import datetime
-from hydra.core.config_store import ConfigStore
-
-from src.config import Config
-# from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
-
-from brax import base
-from brax import envs
-from brax import math
 from brax.base import Base, Motion, Transform
 from brax.base import State as PipelineState
 from brax.envs.base import Env, PipelineEnv, State
@@ -35,6 +25,8 @@ from omegaconf import OmegaConf
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
 
+from src.config.config import Config 
+from src.tools.rollouts import save_rollout
 from src.robots.robot import Robot
 
 import wandb
@@ -61,6 +53,8 @@ def train(
     robot,
     env,
     eval_env,
+    test_env,
+    make_networks_factory,
     train_cfg,
     run_name: str,
     checkpoint_path: str = None,
@@ -98,14 +92,6 @@ def train(
     print(f"Checkpoint path: {ckpt_path}")
 
     #Save environment configuration
-    with open(ckpt_path / "config.json", "w") as f:
-        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
-
-
-
-    print(f"Checkpoint path: {ckpt_path}")  
-
-    #Save environment configuration
     with open(logdir / "train_config.json", "w") as f:
         json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
 
@@ -122,17 +108,12 @@ def train(
         path = os.path.abspath(os.path.join(ckpt_path, f"{current_step}"))        
         orbax_checkpointer.save(path, params, force=True, save_args=save_args)
         policy_path = os.path.join(path, "policy")
-
         model.save_params(policy_path, (params[0], params[1].policy))
+
 
     domain_randomize_fn = None
     #add domain randomization
     #can choose to randomize body mass, friction, sim and robot parameters
-    make_networks_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
-        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
-        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
-    )
 
     train_fn = functools.partial(
         ppo.train,
@@ -169,6 +150,12 @@ def train(
 
         wandb.log(metrics, step=num_steps)
 
+        if last_ckpt_step != 0:
+            print(f"Saving rollout")
+            current_ckpt_path = os.path.join(logdir, "checkpoints", last_ckpt_step)
+            current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
+            save_rollout(current_ckpt_path, current_policy_path, test_env, make_networks_factory, 1000)
+
         last_ckpt_step = num_steps
 
         episode_reward = float(metrics.get("episode_reward", 0))
@@ -179,18 +166,21 @@ def train(
         print(f"{num_steps}: {metrics['eval/episode_reward']}")
     
     try:
-        _, params, _ = train_fn(
+        make_policy, params, _ = train_fn(
             environment=env, eval_env=eval_env, progress_fn=progress
         )
     except KeyboardInterrupt:
         pass
-
 
     print(f"time to jit: {times[1] - times[0]}")
     print(f"time to train: {times[-1] - times[1]}")
     print(f"best checkpoint step: {best_ckpt_step}")
     print(f"best episode reward: {best_episode_reward}")
 
+    print(f"Saving rollout for best checkpoint")
+    best_ckpt_path = os.path.join(logdir, "checkpoints", best_ckpt_step)
+    best_policy_path = os.path.join(best_ckpt_path, f"{best_ckpt_step}", "policy")
+    save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg):
@@ -213,18 +203,31 @@ def main(cfg):
         robot,
         cfg.env.terrain,
         env_cfg)
+    
+    test_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg
+    )
 
-    now = datetime.now()
-    timestamp = now.strftime("%Y%m%d-%H%M%S")
-    experiment_name = f"{cfg.env.name}-{timestamp}"
-    print(f"Experiment name: {experiment_name}")
+    make_networks_factory = functools.partial(
+        ppo_networks.make_ppo_networks,
+        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
+        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
+    )
+
+    time_str = time.strftime("%Y%m%d_%H%M%S")
+    run_name = f"{robot.name}_{cfg.env.name}_{cfg.agent.name}_{time_str}"
 
     train(
         robot=robot,
         env=env,
         eval_env=eval_env,
+        test_env=test_env,
+        make_networks_factory=make_networks_factory,
         train_cfg=train_cfg,
-        run_name=experiment_name,
+        run_name=run_name,
     )
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ class Robot:
         self.name = robot_name
 
         self.root_path = os.path.join("src", "robots", robot_name)
-        self.config_path = '/home/anthony-roumi/Desktop/sim/src/robots/default_humanoid_legs/config.json'
+        self.config_path = os.path.join(self.root_path, "config.json")
 
         with open(self.config_path, "r") as f:
             self.config = json.load(f)
@@ -51,12 +51,6 @@ class Robot:
             self.foot_name = self.config["general"]["foot_name"]
 
         self.joint_limits = {}
-        for joint_name, joint_config in self.config["joints"].items():
-            range = joint_config["range"].split(" ")
-            self.joint_limits[joint_name] = [
-                degrees_to_radians(float(range[0])),
-                degrees_to_radians(float(range[1])),
-            ]
         
         
         
