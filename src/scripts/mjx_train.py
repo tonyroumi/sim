@@ -1,7 +1,25 @@
+""" Script to train RL agent with Brax"""
+
+import argparse
+import sys
+import cli_args
+
+#add argparse argumets
+parser = argparse.ArgumentParser(description="Train a RL agent with Brax")
+parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
+parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+
+cli_args.add_rl_args(parser)
+
+args_cli, hydra_args = parser.parse_known_args()
+
+#clear out sys.argv for Hydra
+sys.argv = [sys.argv[0]] + hydra_args
+
 import os
-
-import jax
-
 from src.locomotion import get_env_class
 
 import time
@@ -21,7 +39,7 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.io import html, mjcf, model
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
 
@@ -31,6 +49,7 @@ from src.robots.robot import Robot
 
 import wandb
 
+#Let's actually understand these flags?
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -49,40 +68,58 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 # Suppress UserWarnings from absl (used by JAX and TensorFlow)
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
-def train(
-    robot,
-    env,
-    eval_env,
-    test_env,
-    make_networks_factory,
-    train_cfg,
-    run_name: str,
-    checkpoint_path: str = None,
-):  
-    """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
-    
-    This function sets up the training environment, initializes configurations, and manages the training process.
-    """
-    
+@hydra.main(config_path="../config", config_name="config")
+def main(cfg: DictConfig):
+    robot = Robot(cfg.robot.name)
 
-    #Change this to the hydra logging directory eventually
+    EnvClass = get_env_class(cfg.env.name)
+    env_cfg = cfg.sim
+    train_cfg = cfg.agent
+
+    
+    env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain, 
+        env_cfg)
+    
+    eval_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg)
+    
+    test_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg
+    )
+
+    make_networks_factory = functools.partial(
+        ppo_networks.make_ppo_networks,
+        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
+        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
+    )
+
+    time_str = time.strftime("%Y%m%d_%H%M%S")
+    run_name = f"{robot.name}_{cfg.env.name}_{cfg.agent.name}_{time_str}"
+
     logdir = epath.Path("logs").resolve() / run_name
 
-    #Change this to the hydra logging directory eventually
-    logdir = epath.Path("logs").resolve()
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
 
     wandb.init(
-        project="MJX_RL",
+        project=args_cli.log_project_name,
         name=run_name,
         config=OmegaConf.to_container(train_cfg)
     )
-    checkpoint = None
+    
 
-    if checkpoint is not None:
-        checkpoint = epath.Path(checkpoint).resolve()
-        print(f"Restoring from checkpoint: {checkpoint}")
+    if args_cli.resume:
+        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
+        print(f"Restoring from checkpoint: {checkpoint_path}")
     else:
         print("No checkpoint provided. Training from scratch.")
 
@@ -142,19 +179,20 @@ def train(
     last_ckpt_step = 0
     best_ckpt_step = 0
     best_episode_reward = -float("inf")
+    last_video_step = 0
 
     def progress(num_steps, metrics):
-        nonlocal best_episode_reward, best_ckpt_step, last_ckpt_step
+        nonlocal best_episode_reward, best_ckpt_step, last_ckpt_step, last_video_step
 
         times.append(time.time())
-
         wandb.log(metrics, step=num_steps)
 
-        if last_ckpt_step != 0:
-            print(f"Saving rollout")
+        if args_cli.video and last_ckpt_step != 0 and (num_steps - last_video_step >= args_cli.video_interval):
+            print(f"Saving rollout at step {num_steps}")
             current_ckpt_path = os.path.join(logdir, "checkpoints", last_ckpt_step)
             current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
-            save_rollout(current_ckpt_path, current_policy_path, test_env, make_networks_factory, 1000)
+            save_rollout(current_ckpt_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
+            last_video_step = num_steps
 
         last_ckpt_step = num_steps
 
@@ -181,54 +219,6 @@ def train(
     best_ckpt_path = os.path.join(logdir, "checkpoints", best_ckpt_step)
     best_policy_path = os.path.join(best_ckpt_path, f"{best_ckpt_step}", "policy")
     save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
-
-@hydra.main(config_path="../config", config_name="config")
-def main(cfg):
-
-    robot = Robot(cfg.robot.name)
-
-    EnvClass = get_env_class(cfg.env.name)
-    env_cfg = cfg.sim
-    train_cfg = cfg.agent
-
-    
-    env = EnvClass(
-        cfg.robot.name,
-        robot,
-        cfg.env.terrain, 
-        env_cfg)
-    
-    eval_env = EnvClass(
-        cfg.robot.name,
-        robot,
-        cfg.env.terrain,
-        env_cfg)
-    
-    test_env = EnvClass(
-        cfg.robot.name,
-        robot,
-        cfg.env.terrain,
-        env_cfg
-    )
-
-    make_networks_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
-        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
-        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
-    )
-
-    time_str = time.strftime("%Y%m%d_%H%M%S")
-    run_name = f"{robot.name}_{cfg.env.name}_{cfg.agent.name}_{time_str}"
-
-    train(
-        robot=robot,
-        env=env,
-        eval_env=eval_env,
-        test_env=test_env,
-        make_networks_factory=make_networks_factory,
-        train_cfg=train_cfg,
-        run_name=run_name,
-    )
 
 if __name__ == "__main__":
     main()
