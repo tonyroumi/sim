@@ -36,7 +36,7 @@ def get_rollout(policy_path, env, make_networks_factory, num_steps):
        
     return rollout
 
-def save_rollout(ckpt_path, policy_path, env, make_networks_factory, num_steps) -> None:
+def save_rollout(save_path, policy_path, env, make_networks_factory, num_steps) -> None:
     """
     Save a rollout to a file
     """
@@ -46,5 +46,4 @@ def save_rollout(ckpt_path, policy_path, env, make_networks_factory, num_steps) 
     frames = env.render(traj)
     fps = 1.0 / env.dt / 2
 
-    rollout_path = os.path.join(ckpt_path, "rollout.mp4")
-    media.write_video(rollout_path, frames, fps=fps)
+    media.write_video(save_path, frames, fps=fps)

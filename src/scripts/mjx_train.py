@@ -3,14 +3,16 @@
 import argparse
 import sys
 import cli_args
+import jax
 
 #add argparse argumets
 parser = argparse.ArgumentParser(description="Train a RL agent with Brax")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
+parser.add_argument("--video", type=bool, default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument("--disable_jit", type=bool, default=False, help="Disable JIT compilation")
 
 cli_args.add_rl_args(parser)
 
@@ -105,7 +107,7 @@ def main(cfg: DictConfig):
     time_str = time.strftime("%Y%m%d_%H%M%S")
     run_name = f"{robot.name}_{cfg.env.name}_{cfg.agent.name}_{time_str}"
 
-    logdir = epath.Path("logs").resolve() / run_name
+    logdir = epath.Path("logs").resolve() 
 
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
@@ -116,10 +118,10 @@ def main(cfg: DictConfig):
         config=OmegaConf.to_container(train_cfg)
     )
     
-
-    if args_cli.resume:
+    checkpoint_path = None
+    if False:
         checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
-        print(f"Restoring from checkpoint: {checkpoint_path}")
+        print(f"Restoring from checkpoint: {checkpoint_path}") 
     else:
         print("No checkpoint provided. Training from scratch.")
 
@@ -188,10 +190,11 @@ def main(cfg: DictConfig):
         wandb.log(metrics, step=num_steps)
 
         if args_cli.video and last_ckpt_step != 0 and (num_steps - last_video_step >= args_cli.video_interval):
-            print(f"Saving rollout at step {num_steps}")
-            current_ckpt_path = os.path.join(logdir, "checkpoints", last_ckpt_step)
+            print(f"Saving rollout at step {last_ckpt_step}")
+            current_ckpt_path = os.path.join(logdir, "checkpoints")
             current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
-            save_rollout(current_ckpt_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
+            save_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}.mp4")
+            save_rollout(save_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
             last_video_step = num_steps
 
         last_ckpt_step = num_steps

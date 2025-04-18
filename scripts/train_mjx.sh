@@ -31,6 +31,17 @@ POLICY_LAYERS="[512,256,128]"
 VALUE_LAYERS="[512,256,128]"
 NUM_RESETS_PER_EVAL=1
 
+# Video recording parameters
+VIDEO=true
+VIDEO_LENGTH=1000
+VIDEO_INTERVAL=100000
+
+# Checkpoint loading parameters
+RESUME=false
+LOAD_RUN=""
+CHECKPOINT=""
+LOG_PROJECT_NAME=""
+
 # Run the training script with Hydra parameters
 python $TRAIN_SCRIPT \
     task=$TASK \
@@ -55,7 +66,16 @@ python $TRAIN_SCRIPT \
     agent.max_grad_norm=$MAX_GRAD_NORM \
     agent.policy_hidden_layer_sizes="$POLICY_LAYERS" \
     agent.value_hidden_layer_sizes="$VALUE_LAYERS" \
-    agent.num_resets_per_eval=$NUM_RESETS_PER_EVAL
+    agent.num_resets_per_eval=$NUM_RESETS_PER_EVAL \
+    --video=$VIDEO \
+    --video_length=$VIDEO_LENGTH \
+    --video_interval=$VIDEO_INTERVAL \
+    --task=$TASK \
+    --seed=$SEED \
+    --resume=$RESUME \
+    --load_run="$LOAD_RUN" \
+    --checkpoint="$CHECKPOINT" \
+    --log_project_name="$LOG_PROJECT_NAME"
 
     # # Robot configuration. INCLUDE KP PARAMS AND OTHER THINGS.
     # robot=humanoid_legs \

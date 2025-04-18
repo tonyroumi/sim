@@ -3,6 +3,8 @@ import os
 from typing import Any, Dict, List
 from src.utils.math_utils import degrees_to_radians, radians_to_degrees
 
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+
 class Robot:
     """ This class defines data structure of a robot"""
 
@@ -14,7 +16,7 @@ class Robot:
         """
         self.name = robot_name
 
-        self.root_path = os.path.join("src", "robots", robot_name)
+        self.root_path = os.path.join(project_root, "src", "robots", robot_name)
         self.config_path = os.path.join(self.root_path, "config.json")
 
         with open(self.config_path, "r") as f:
