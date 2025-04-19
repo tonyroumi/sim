@@ -13,6 +13,7 @@ from mujoco import mjx
 from mujoco.mjx._src import support  # type: ignore
 from src.utils.file_utils import find_robot_file_path
 from src.utils.math_utils import quat2euler, quat_inv, rotate_vec
+from src.rewards import get_reward_function
 
 class Joystick(PipelineEnv):
     def __init__(
@@ -114,14 +115,12 @@ class Joystick(PipelineEnv):
 
         # prepare list of functions
         self.reward_names = list(reward_scale_dict.keys())
-        self.reward_functions: List[Callable[..., jax.Array]] = []
+        self.reward_functions = []
         self.reward_scales = jp.zeros(len(reward_scale_dict))
         for i, (name, scale) in enumerate(reward_scale_dict.items()):
-            if scale < 0:
-                self.reward_functions.append(getattr(self, "_cost_" + name))
-            else:
-                self.reward_functions.append(getattr(self, "_reward_" + name))
+            self.reward_functions.append(get_reward_function(name))
             self.reward_scales = self.reward_scales.at[i].set(scale)
+
 
         self.healthy_z_range = self.cfg.rewards.healthy_z_range
         self.tracking_sigma = self.cfg.rewards.tracking_sigma
@@ -352,16 +351,22 @@ class Joystick(PipelineEnv):
         """
         # Create an array of indices to map over
         indices = jp.arange(len(self.reward_names))
+        
+        # Create a list of partial functions that each include self as the first argument
+        reward_fns_with_self = [
+            lambda ps, inf, act, fn=fn: fn(self, ps, inf, act)
+            for fn in self.reward_functions
+        ]
+        
         # Use jax.lax.map to compute rewards
         reward_arr = jax.lax.map(
             lambda i: jax.lax.switch(
                 i,
-                self.reward_functions,
+                reward_fns_with_self,
                 pipeline_state,
                 info,
                 action,
-            )
-            * self.reward_scales[i],
+            ) * self.reward_scales[i],
             indices,
         )
 
@@ -421,83 +426,6 @@ class Joystick(PipelineEnv):
         ).astype(jp.float32)
 
         return contact_forces_global, left_foot_contact_mask, right_foot_contact_mask        
-
-     # Tracking rewards.
-
-    def _reward_lin_vel_xy(
-        self,
-        pipeline_state: base.State,
-        info: dict[str, Any],
-        action: jax.Array,
-    ) -> jax.Array:
-        
-        lin_vel_local = rotate_vec(
-            pipeline_state.xd.vel[0], quat_inv(pipeline_state.x.rot[0])
-        )
-        lin_vel_xy = lin_vel_local[:2]
-        error = jp.linalg.norm(lin_vel_xy -  info["command"][:2], axis=-1)
-        reward = jp.exp(-self.tracking_sigma * error**2)
-        return reward
-
-    def _reward_ang_vel_yaw(
-        self,
-        pipeline_state: base.State,
-        info: dict[str, Any],
-        action: jax.Array,
-    ) -> jax.Array:
-        ang_vel_local = rotate_vec(
-            pipeline_state.xd.ang[0], quat_inv(pipeline_state.x.rot[0])
-        )
-        ang_vel_yaw = ang_vel_local[2]
-        error = jp.linalg.norm(ang_vel_yaw - info["command"][2])
-        reward = jp.exp(-self.tracking_sigma / 4 * error**2)
-        return reward
-    
-    
-    # Energy related rewards.
-    def _cost_torques(
-        self,
-        pipeline_state: base.State,
-        info: dict[str, Any],
-        action: jax.Array,
-    ) -> jax.Array:
-        return jp.sum(jp.abs(pipeline_state.actuator_force))
-
-    def _cost_energy(
-        self,
-        pipeline_state: base.State,
-        info: dict[str, Any],
-        action: jax.Array,
-    ) -> jax.Array:
-        return jp.sum(jp.abs(pipeline_state.qvel) * jp.abs(pipeline_state.qfrc_actuator))
-
-    def _cost_action_rate(
-        self,
-        pipeline_state: base.State,
-        info: dict[str, Any],
-        action: jax.Array,
-    ) -> jax.Array:
-        c1 = jp.sum(jp.square(action - info["last_act"]))
-        return c1
-    
-    def _reward_survival(
-        self, pipeline_state: base.State, info: dict[str, Any], action: jax.Array
-    ) -> jax.Array:
-        """Calculates a survival reward based on the pipeline state and action taken.
-
-        The reward is negative if the episode is marked as done before reaching the
-        specified number of reset steps, encouraging survival until the reset threshold.
-
-        Args:
-            pipeline_state (base.State): The current state of the pipeline.
-            info (dict[str, Any]): A dictionary containing episode information, including
-                whether the episode is done and the current step count.
-            action (jax.Array): The action taken at the current step.
-
-        Returns:
-            jax.Array: A float32 array representing the survival reward.
-        """
-        return -(info["done"] & (info["step"] < self.reset_steps)).astype(jp.float32)
             
 
     def sample_command(self, rng: jax.Array) -> jax.Array:

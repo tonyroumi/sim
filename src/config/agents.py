@@ -3,6 +3,7 @@ from typing import Tuple
 
 @dataclass
 class PPOConfig:
+    name: str = "ppo"
     num_timesteps: int = 100_000_000
     num_evals: int = 1000
     episode_length: int = 1000

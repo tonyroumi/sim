@@ -1,28 +1,39 @@
-import os
+""" Script to train RL agent with Brax"""
 
+import argparse
+import sys
+import cli_args
+import jax
+
+
+#add argparse argumets
+parser = argparse.ArgumentParser(description="Train a RL agent with Brax")
+parser.add_argument("--video", type=bool, default=False, help="Record videos during training.")
+parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument("--disable_jit", type=bool, default=False, help="Disable JIT compilation")
+
+cli_args.add_rl_args(parser)
+
+args_cli, hydra_args = parser.parse_known_args()
+
+#clear out sys.argv for Hydra
+sys.argv = [sys.argv[0]] + hydra_args
+
+import os
 from src.locomotion import get_env_class
 
 import time
 import json
 import hydra
 import warnings
-import argparse
 import functools
 from typing import Any
 from etils import epath
-from absl import app
-from absl import flags
 from absl import logging
 
-from datetime import datetime
-from hydra.core.config_store import ConfigStore
-
-from src.config import Config
-# from src.locomotion.default_humanoid_legs.config.ppo_config import PPOConfig
-
-from brax import base
-from brax import envs
-from brax import math
 from brax.base import Base, Motion, Transform
 from brax.base import State as PipelineState
 from brax.envs.base import Env, PipelineEnv, State
@@ -31,14 +42,17 @@ from brax.training.agents.ppo import train as ppo
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.io import html, mjcf, model
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
 
+from src.config.config import Config 
+from src.tools.rollouts import save_rollout
 from src.robots.robot import Robot
 
 import wandb
 
+#Let's actually understand these flags?
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -57,41 +71,67 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 # Suppress UserWarnings from absl (used by JAX and TensorFlow)
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
-def train(
-    robot,
-    env,
-    eval_env,
-    train_cfg,
-    run_name: str,
-    checkpoint_path: str = None,
-):  
-    """ Trains a reinforcement learning agent using Proximal Policy Optimization (PPO) 
+@hydra.main(config_path="../config", config_name="config")
+def main(cfg: DictConfig):
+    robot = Robot(cfg.robot.name)
+
+    EnvClass = get_env_class(cfg.env.name)
+    env_cfg = cfg.sim
+    train_cfg = cfg.agent
+
     
-    This function sets up the training environment, initializes configurations, and manages the training process.
-    """
+    env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain, 
+        env_cfg)
     
-    #Change this to the hydra logging directory eventually
-    logdir = epath.Path("logs").resolve()
+    eval_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg)
+    
+    test_env = EnvClass(
+        cfg.robot.name,
+        robot,
+        cfg.env.terrain,
+        env_cfg
+    )
+
+    make_networks_factory = functools.partial(
+        ppo_networks.make_ppo_networks,
+        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
+        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
+        policy_obs_key="state",
+        value_obs_key="privileged_state",
+    )
+
+    time_str = time.strftime("%Y%m%d_%H%M%S")
+    run_name = f"{robot.name}_{cfg.env.name}_{cfg.agent.name}_{time_str}"
+
+    logdir = epath.Path("logs").resolve() 
+
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
 
     wandb.init(
-        project="MJX_RL",
+        project=args_cli.log_project_name,
         name=run_name,
         config=OmegaConf.to_container(train_cfg)
     )
-    checkpoint = None
-
-    if checkpoint is not None:
-        checkpoint = epath.Path(checkpoint).resolve()
-        print(f"Restoring from checkpoint: {checkpoint}")
+    
+    checkpoint_path = None
+    if False:
+        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
+        print(f"Restoring from checkpoint: {checkpoint_path}") 
     else:
         print("No checkpoint provided. Training from scratch.")
 
 
     ckpt_path = logdir / "checkpoints"
     ckpt_path.mkdir(parents=True, exist_ok=True)
-    print(f"Checkpoint path: {ckpt_path}")  
+    print(f"Checkpoint path: {ckpt_path}")
 
     #Save environment configuration
     with open(logdir / "train_config.json", "w") as f:
@@ -110,17 +150,12 @@ def train(
         path = os.path.abspath(os.path.join(ckpt_path, f"{current_step}"))        
         orbax_checkpointer.save(path, params, force=True, save_args=save_args)
         policy_path = os.path.join(path, "policy")
-
         model.save_params(policy_path, (params[0], params[1].policy))
+
 
     domain_randomize_fn = None
     #add domain randomization
     #can choose to randomize body mass, friction, sim and robot parameters
-    make_networks_factory = functools.partial(
-        ppo_networks.make_ppo_networks,
-        policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
-        value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
-    )
 
     train_fn = functools.partial(
         ppo.train,
@@ -149,13 +184,21 @@ def train(
     last_ckpt_step = 0
     best_ckpt_step = 0
     best_episode_reward = -float("inf")
+    last_video_step = 0
 
     def progress(num_steps, metrics):
-        nonlocal best_episode_reward, best_ckpt_step, last_ckpt_step
+        nonlocal best_episode_reward, best_ckpt_step, last_ckpt_step, last_video_step
 
         times.append(time.time())
-
         wandb.log(metrics, step=num_steps)
+
+        if args_cli.video and last_ckpt_step != 0 and (num_steps - last_video_step >= args_cli.video_interval):
+            print(f"Saving rollout at step {last_ckpt_step}")
+            current_ckpt_path = os.path.join(logdir, "checkpoints")
+            current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
+            save_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}.mp4")
+            save_rollout(save_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
+            last_video_step = num_steps
 
         last_ckpt_step = num_steps
 
@@ -167,55 +210,21 @@ def train(
         print(f"{num_steps}: {metrics['eval/episode_reward']}")
     
     try:
-        _, params, _ = train_fn(
+        make_policy, params, _ = train_fn(
             environment=env, eval_env=eval_env, progress_fn=progress
         )
     except KeyboardInterrupt:
         pass
-
 
     print(f"time to jit: {times[1] - times[0]}")
     print(f"time to train: {times[-1] - times[1]}")
     print(f"best checkpoint step: {best_ckpt_step}")
     print(f"best episode reward: {best_episode_reward}")
 
-    #let's save a rollout here 
-
-
-@hydra.main(config_path="../config", config_name="config")
-def main(cfg):
-
-    robot = Robot(cfg.robot.name)
-
-    EnvClass = get_env_class(cfg.env.name)
-    env_cfg = cfg.sim
-    train_cfg = cfg.agent
-
-    
-    env = EnvClass(
-        cfg.robot.name,
-        robot,
-        cfg.env.terrain, 
-        env_cfg)
-    
-    eval_env = EnvClass(
-        cfg.robot.name,
-        robot,
-        cfg.env.terrain,
-        env_cfg)
-
-    now = datetime.now()
-    timestamp = now.strftime("%Y%m%d-%H%M%S")
-    experiment_name = f"{cfg.env.name}-{timestamp}"
-    print(f"Experiment name: {experiment_name}")
-
-    train(
-        robot=robot,
-        env=env,
-        eval_env=eval_env,
-        train_cfg=train_cfg,
-        run_name=experiment_name,
-    )
+    print(f"Saving rollout for best checkpoint")
+    best_ckpt_path = os.path.join(logdir, "checkpoints", f"{best_ckpt_step}")
+    best_policy_path = os.path.join(best_ckpt_path, "policy")
+    save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
 
 if __name__ == "__main__":
     main()
