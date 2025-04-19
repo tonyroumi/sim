@@ -102,6 +102,8 @@ def main(cfg: DictConfig):
         ppo_networks.make_ppo_networks,
         policy_hidden_layer_sizes=train_cfg.policy_hidden_layer_sizes,
         value_hidden_layer_sizes=train_cfg.value_hidden_layer_sizes,
+        policy_obs_key="state",
+        value_obs_key="privileged_state",
     )
 
     time_str = time.strftime("%Y%m%d_%H%M%S")
@@ -219,8 +221,8 @@ def main(cfg: DictConfig):
     print(f"best episode reward: {best_episode_reward}")
 
     print(f"Saving rollout for best checkpoint")
-    best_ckpt_path = os.path.join(logdir, "checkpoints", best_ckpt_step)
-    best_policy_path = os.path.join(best_ckpt_path, f"{best_ckpt_step}", "policy")
+    best_ckpt_path = os.path.join(logdir, "checkpoints", f"{best_ckpt_step}")
+    best_policy_path = os.path.join(best_ckpt_path, "policy")
     save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
 
 if __name__ == "__main__":
