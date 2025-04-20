@@ -4,6 +4,7 @@ import mediapy as media
 from brax.io import model
 from brax.training.agents.ppo import networks as ppo_networks
 from moviepy import VideoFileClip, clips_array
+from src.utils.IO_utils import SuppressOutput
 
 def get_rollout(policy_path, env, make_networks_factory, num_steps):
     """
@@ -76,9 +77,10 @@ def render_video(
         )
         video_paths.append(video_path)
 
-    # Load the video clips using moviepy
-    clips = [VideoFileClip(path) for path in video_paths]
-    # Arrange the clips in a 2x2 grid
-    final_video = clips_array([[clips[0], clips[1]]])
-    # Save the final concatenated video
-    final_video.write_videofile(save_path + "-eval.mp4")
+    with SuppressOutput():
+        # Load the video clips using moviepy
+        clips = [VideoFileClip(path) for path in video_paths]
+        # Arrange the clips in a 2x2 grid
+        final_video = clips_array([[clips[0], clips[1]]])
+        # Save the final concatenated video
+        final_video.write_videofile(save_path + "-eval.mp4", logger=None)
