@@ -32,55 +32,24 @@ VALUE_LAYERS="[512,256,128]"
 NUM_RESETS_PER_EVAL=1
 
 # Video recording parameters
-VIDEO=false
-VIDEO_LENGTH=100000
+VIDEO=true
+VIDEO_LENGTH=10000000
 VIDEO_INTERVAL=100000
 
 # Checkpoint loading parameters
-RESUME=true
+RESUME=false
 LOAD_RUN=""
 CHECKPOINT=""
 LOG_PROJECT_NAME=""
 
 # Run the training script with Hydra parameters
 python $TRAIN_SCRIPT \
-    task=$TASK \
-    +env=$ENV \
-    env.terrain="$TERRAIN" \
-    +agent=$AGENT_TYPE \
-    agent.num_evals=$NUM_EVALS \
-    agent.episode_length=$EPISODE_LENGTH \
-    agent.unroll_length=$UNROLL_LENGTH \
-    agent.num_minibatches=$NUM_MINIBATCHES \
-    agent.num_updates_per_batch=$NUM_UPDATES_PER_BATCH \
-    agent.discounting=$DISCOUNTING \
-    agent.learning_rate=$LEARNING_RATE \
-    agent.entropy_cost=$ENTROPY_COST \
-    agent.clipping_epsilon=$CLIPPING_EPSILON \
-    agent.num_envs=$NUM_ENVS \
-    agent.batch_size=$BATCH_SIZE \
-    agent.seed=$SEED \
-    agent.render_interval=$RENDER_INTERVAL \
-    agent.normalize_observations=$NORMALIZE_OBS \
-    agent.action_repeat=$ACTION_REPEAT \
-    agent.max_grad_norm=$MAX_GRAD_NORM \
-    agent.policy_hidden_layer_sizes="$POLICY_LAYERS" \
-    agent.value_hidden_layer_sizes="$VALUE_LAYERS" \
-    agent.num_resets_per_eval=$NUM_RESETS_PER_EVAL \
-    --video $VIDEO \
-    --video_length=$VIDEO_LENGTH \
-    --video_interval=$VIDEO_INTERVAL \
-    --task=$TASK \
-    --seed=$SEED \
-    --resume $RESUME \
+    --video_length="$VIDEO_LENGTH" \
+    --video_interval="$VIDEO_INTERVAL" \
+    --task="$TASK" \
+    --seed="$SEED" \
     --load_run="$LOAD_RUN" \
     --checkpoint="$CHECKPOINT" \
-    --log_project_name="$LOG_PROJECT_NAME"
-
-    # # Robot configuration. INCLUDE KP PARAMS AND OTHER THINGS.
-    # robot=humanoid_legs \
-    
-    # # Simulation configuration (MJX)
-    # sim=mjx \
-    # # Random seed and other global settings
-    # seed=42 \
+    --log_project_name="$LOG_PROJECT_NAME" \
+    --video \
+    # --resume \
