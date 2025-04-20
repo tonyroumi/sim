@@ -14,6 +14,7 @@ from mujoco.mjx._src import support  # type: ignore
 from src.utils.file_utils import find_robot_file_path
 from src.utils.math_utils import quat2euler, quat_inv, rotate_vec
 from src.rewards import get_reward_function
+from src.tools.collision import check_feet_contact
 
 class Joystick(PipelineEnv):
     def __init__(
@@ -147,6 +148,8 @@ class Joystick(PipelineEnv):
         phase_dt = 2 * jp.pi * self.dt * gait_freq #Change in phase per time step (how gait phase evolves over time)
         phase = jp.array([0, jp.pi]) #One leg starts at beginning of gait cycle, other starts at mid-gait cycle (natural alternation between two legs)
 
+        contact = check_feet_contact(pipeline_state, self.feet_link_ids)
+
         #Generate a random command
         rng, cmd_rng = jax.random.split(rng_cmd)
         cmd = self.sample_command(cmd_rng) #[lin_vel_x, lin_vel_y, ang_vel_yaw]
@@ -157,10 +160,10 @@ class Joystick(PipelineEnv):
             "phase": phase,
             "phase_dt": phase_dt,
             "command": cmd,
-            # "contact": jp.zeros(2),
+            "last_contact": contact,
             "last_act": jp.zeros(self.action_size),
             "last_last_act": jp.zeros(self.action_size),
-            # "feet_air_time": jp.zeros(2),
+            "feet_air_time": jp.zeros(2),
             "last_torso_euler": jp.zeros(3),
             "done": False,
             "step": 0,
@@ -181,8 +184,8 @@ class Joystick(PipelineEnv):
         reward, done, zero = jp.zeros(3)
 
         metrics = {}
-        # for k in self.reward_names:
-        #     metrics[f"reward/{k}"] = zero
+        for k in self.reward_names:
+            metrics[k] = zero
         
         return State(
             pipeline_state, obs, reward, done, metrics, state_info
@@ -243,7 +246,9 @@ class Joystick(PipelineEnv):
         state.info["step"] = jp.where(
             done | (state.info["step"] > self.reset_steps), 0, state.info["step"]
         )
-        # state.metrics.update(reward_dict)
+
+        state.info["last_contact"] = check_feet_contact(pipeline_state, self.feet_link_ids)
+        state.metrics.update(reward_dict)
 
         return state.replace(
             pipeline_state = pipeline_state,
@@ -299,7 +304,7 @@ class Joystick(PipelineEnv):
 
         actuator_forces = pipeline_state.actuator_force
         root_height = pipeline_state.q[2]
-        feet_vel = pipeline_state.xd.vel[self.feet_link_ids, 0] #I think this is the velocity of the feet in the x direction. Check in case
+        feet_vel = jp.array([pipeline_state.cvel[4,3], pipeline_state.cvel[7,3]]) 
 
     
         privileged_obs = jp.hstack([
@@ -312,8 +317,8 @@ class Joystick(PipelineEnv):
             actuator_forces, #(12,)
             root_height, #(1,)
             feet_vel, #(2,)
-            # info["feet_air_time"], #(2,)
-            # info["contact"], #(2,)
+            info["feet_air_time"], #(2,)
+            info["last_contact"], #(2,)
             info["command"], #(3,)
             info["last_act"], #(12,)
         ])
@@ -323,13 +328,13 @@ class Joystick(PipelineEnv):
             obs += self.obs_noise_scale * jax.random.normal(obs_rng, obs.shape)
         
         #check this
-        obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
+        # obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
 
-        privileged_obs = (
-            jp.roll(privileged_obs_history, privileged_obs.size)
-            .at[: privileged_obs.size]
-            .set(privileged_obs)
-        )
+        # privileged_obs = (
+        #     jp.roll(privileged_obs_history, privileged_obs.size)
+        #     .at[: privileged_obs.size]
+        #     .set(privileged_obs)
+        # )
         
         return {
             "state": obs, 
@@ -374,59 +379,7 @@ class Joystick(PipelineEnv):
         for i, name in enumerate(self.reward_names):
             reward_dict[name] = reward_arr[i]
 
-        return reward_dict
-    
-    def _get_contact_forces(self, data: mjx.Data):
-        """Compute contact forces between colliders and determine foot contact masks.
-
-        This function calculates the contact forces between colliders based on the provided
-        simulation data. It also determines whether the left and right foot colliders are in
-        contact with the ground by comparing the contact forces against a predefined threshold.
-
-        Args:
-            data (mjx.Data): The simulation data containing contact information.
-
-        Returns:
-            Tuple[jax.Array, jax.Array, jax.Array]: A tuple containing:
-                - A 3D array of shape (num_colliders, num_colliders, 3) representing the global
-                  contact forces between colliders.
-                - A 1D array indicating whether each left foot collider is in contact.
-                - A 1D array indicating whether each right foot collider is in contact.
-        """
-        # Extract geom1 and geom2 directly
-        geom1 = data.contact.geom1
-        geom2 = data.contact.geom2
-
-        def get_body_index(geom_id: jax.Array) -> jax.Array:
-            return jp.argmax(self.collider_geom_ids == geom_id)
-
-        # Vectorized computation of body indices for geom1 and geom2
-        body_indices_1 = jax.vmap(get_body_index)(geom1)
-        body_indices_2 = jax.vmap(get_body_index)(geom2)
-
-        contact_forces_global = jp.zeros((self.num_colliders, self.num_colliders, 3))
-        for i in range(data.ncon):
-            contact_force = self.jit_contact_force(self.sys, data, i, True)[:3]
-            # Update the contact forces for both body_indices_1 and body_indices_2
-            # Add instead of set to accumulate forces from multiple contacts
-            contact_forces_global = contact_forces_global.at[
-                body_indices_1[i], body_indices_2[i]
-            ].add(contact_force)
-            contact_forces_global = contact_forces_global.at[
-                body_indices_2[i], body_indices_1[i]
-            ].add(contact_force)
-
-        left_foot_contact_mask = (
-            contact_forces_global[0, self.left_foot_collider_indices, 2]
-            > self.contact_force_threshold
-        ).astype(jp.float32)
-        right_foot_contact_mask = (
-            contact_forces_global[0, self.right_foot_collider_indices, 2]
-            > self.contact_force_threshold
-        ).astype(jp.float32)
-
-        return contact_forces_global, left_foot_contact_mask, right_foot_contact_mask        
-            
+        return reward_dict            
 
     def sample_command(self, rng: jax.Array) -> jax.Array:
         """ 
