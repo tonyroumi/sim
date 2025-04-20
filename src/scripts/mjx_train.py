@@ -72,7 +72,6 @@ warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
-    print(args_cli)
     robot = Robot(cfg.robot.name)
 
     EnvClass = get_env_class(cfg.env.name)
@@ -198,7 +197,7 @@ def main(cfg: DictConfig):
             current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
             save_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}.mp4")
             save_rollout(save_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
-            last_video_step = num_steps
+            last_video_step = last_ckpt_step
 
         last_ckpt_step = num_steps
 
