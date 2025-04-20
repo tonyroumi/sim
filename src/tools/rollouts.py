@@ -81,4 +81,4 @@ def render_video(
     # Arrange the clips in a 2x2 grid
     final_video = clips_array([[clips[0], clips[1]]])
     # Save the final concatenated video
-    final_video.write_videofile(save_path + "eval.mp4")
+    final_video.write_videofile(save_path + "-eval.mp4")
