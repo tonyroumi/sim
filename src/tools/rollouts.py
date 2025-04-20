@@ -56,16 +56,14 @@ def render_video(
     """Renders and saves a video of the environment from multiple camera angles.
 
     """
-    # Create results directory if it doesn't exist
-    results_dir = os.path.join(save_path, "results")
-    os.makedirs(results_dir, exist_ok=True)
+   
     
     # Define paths for each camera's video
     video_paths = []
 
     # Render and save videos for each camera
     for camera in ["back", "side"]:
-        video_path = os.path.join(save_path, "results",f"{camera}.mp4")
+        video_path = save_path + f"-{camera}.mp4"
         media.write_video(
             video_path,
             env.render(
@@ -83,4 +81,4 @@ def render_video(
     # Arrange the clips in a 2x2 grid
     final_video = clips_array([[clips[0], clips[1]]])
     # Save the final concatenated video
-    final_video.write_videofile(os.path.join(save_path, "results", "eval.mp4"))
+    final_video.write_videofile(save_path + "eval.mp4")
