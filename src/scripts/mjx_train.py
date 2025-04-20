@@ -8,12 +8,11 @@ import jax
 
 #add argparse argumets
 parser = argparse.ArgumentParser(description="Train a RL agent with Brax")
-parser.add_argument("--video", type=bool, default=False, help="Record videos during training.")
+parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
 parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
-parser.add_argument("--disable_jit", type=bool, default=False, help="Disable JIT compilation")
 
 cli_args.add_rl_args(parser)
 
@@ -73,6 +72,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
+    print(args_cli)
     robot = Robot(cfg.robot.name)
 
     EnvClass = get_env_class(cfg.env.name)
@@ -122,7 +122,7 @@ def main(cfg: DictConfig):
     )
     
     checkpoint_path = None
-    if False:
+    if args_cli.resume:
         checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
         print(f"Restoring from checkpoint: {checkpoint_path}") 
     else:
