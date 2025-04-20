@@ -3,6 +3,7 @@ import jax
 import mediapy as media
 from brax.io import model
 from brax.training.agents.ppo import networks as ppo_networks
+from moviepy import VideoFileClip, clips_array
 
 def get_rollout(policy_path, env, make_networks_factory, num_steps):
     """
@@ -40,10 +41,46 @@ def save_rollout(save_path, policy_path, env, make_networks_factory, num_steps) 
     """
     Save a rollout to a file
     """
+    
     rollout = get_rollout(policy_path, env, make_networks_factory, num_steps)
-    traj = rollout[::2]
+    render_video(env, rollout, save_path, render_every=2)
 
-    frames = env.render(traj)
-    fps = 1.0 / env.dt / 2
+def render_video(
+    env,
+    rollout,
+    save_path: str,
+    render_every: int = 2,
+    height: int = 360,
+    width: int = 640,
+):
+    """Renders and saves a video of the environment from multiple camera angles.
 
-    media.write_video(save_path, frames, fps=fps)
+    """
+    # Create results directory if it doesn't exist
+    results_dir = os.path.join(save_path, "results")
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Define paths for each camera's video
+    video_paths = []
+
+    # Render and save videos for each camera
+    for camera in ["back", "side"]:
+        video_path = os.path.join(save_path, "results",f"{camera}.mp4")
+        media.write_video(
+            video_path,
+            env.render(
+                rollout[::render_every],
+                height=height,
+                width=width,
+                camera=camera,
+            ),
+            fps=1.0 / env.dt / render_every,
+        )
+        video_paths.append(video_path)
+
+    # Load the video clips using moviepy
+    clips = [VideoFileClip(path) for path in video_paths]
+    # Arrange the clips in a 2x2 grid
+    final_video = clips_array([[clips[0], clips[1]]])
+    # Save the final concatenated video
+    final_video.write_videofile(os.path.join(save_path, "results", "eval.mp4"))
