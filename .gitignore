@@ -1,0 +1,10 @@
+.vscode
+
+outputs
+
+.pycache
+
+__pycache__
+
+*.pyc
+
