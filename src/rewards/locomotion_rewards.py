@@ -6,7 +6,6 @@ from brax import base
 from typing import Any
 from src.tools import gait
 
- # Tracking rewards.
 
 @register_reward("lin_vel")
 def _lin_vel(
@@ -15,9 +14,10 @@ def _lin_vel(
     info: dict[str, Any],
     action: jax.Array,
 ) -> jax.Array:
-        
-    lin_vel_error = jp.sum(jp.square(info["command"][:2] - pipeline_state.cvel[self.torso_body_id, 3:-1]))
-    return jp.exp(-lin_vel_error / self.tracking_sigma)
+    local_lin_vel = self.get_local_linvel(pipeline_state)
+    lin_vel_error = jp.sum(jp.square(info["command"][:2] - local_lin_vel[:2]))
+    reward = jp.exp(-self.tracking_sigma * lin_vel_error)
+    return reward
 
 @register_reward("ang_vel")
 def _ang_vel(
@@ -26,8 +26,10 @@ def _ang_vel(
     info: dict[str, Any],
     action: jax.Array,
 ) -> jax.Array:
-    ang_vel_error = jp.square(info["command"][2] - pipeline_state.cvel[self.torso_body_id, 2])
-    return jp.exp(-ang_vel_error / self.tracking_sigma)
+    local_ang_vel = self.get_gyro(pipeline_state)
+    ang_vel_error = jp.square(info["command"][2] - local_ang_vel[-1])
+    reward = jp.exp(-self.tracking_sigma / 4 * ang_vel_error)
+    return reward
 
 
 # Energy related rewards.
@@ -61,7 +63,8 @@ def _action_rate(
     return c1
 
 
-  # Feet related rewards.
+
+# Feet related rewards.
 
 @register_reward("feet_slip")
 def _feet_slip(
@@ -70,7 +73,7 @@ def _feet_slip(
     info: dict[str, Any],
     action: jax.Array,
 ) -> jax.Array:
-    body_vel = pipeline_state.cvel[self.torso_body_id,3:-1]
+    body_vel = self.get_global_linvel(pipeline_state)
     reward = jp.sum(jp.linalg.norm(body_vel, axis=-1) * info["last_contact"])
     return reward
 
@@ -119,6 +122,16 @@ def _feet_phase(
 
 # Other rewards.
 
+@register_reward("pose")
+def _pose(self, pipeline_state: base.State, info, action) -> jax.Array:
+    qpos = pipeline_state.qpos[7:]
+    return jp.sum(jp.square(qpos - self.default_pose) * self._weights)
+
+@register_reward("orientation")
+def _orientation(self, pipeline_state: base.State, info, action) -> jax.Array:
+    gravity = self.get_gravity(pipeline_state)
+    return jp.sum(jp.square(gravity[:2]))
+
 @register_reward("stand_still")
 def _stand_still(
       self,
@@ -148,4 +161,46 @@ def _survival(
         jax.Array: A float32 array representing the survival reward.
     """
     return -(info["done"] & (info["step"] < self.reset_steps)).astype(jp.float32)
+
+
+@register_reward("distance_traveled")
+def _distance_traveled(self, pipeline_state, info, action):
+    """Rewards the agent based on the total distance traveled from the starting point.
+    
+    This reward:
+    1. Calculates horizontal distance from origin (x-y plane)
+    2. Provides increasing reward for greater distances
+    3. Optionally normalizes the reward to avoid excessive scaling
+    
+    Args:
+        pipeline_state: Current physics state
+        info: Additional state information
+        action: Current action
+        
+    Returns:
+        Scalar reward value based on distance traveled
+    """
+    # Get current position of the torso (center of mass)
+    current_pos = pipeline_state.x.pos[self.torso_body_id]
+    
+    # Calculate horizontal distance from origin (x-y plane only)
+    # Ignoring z-axis (height) to focus on ground movement
+    horizontal_distance = jp.sqrt(current_pos[0]**2 + current_pos[1]**2)
+    
+    # Parameters (consider moving these to config)
+    max_distance = 10.0  # Distance at which reward saturates
+    reward_scale = 1.0   # Scaling factor for the reward
+    
+    # Option 1: Linear scaling with maximum cap
+    # normalized_distance = jp.minimum(horizontal_distance, max_distance) / max_distance
+    
+    # Option 2: Logarithmic scaling to reduce reward growth at larger distances
+    # This provides more reward for initial movement but diminishing returns
+    normalized_distance = jp.log(1.0 + horizontal_distance) / jp.log(1.0 + max_distance)
+    
+    # Calculate final reward
+    distance_reward = normalized_distance * reward_scale
+    cmd_norm = jp.linalg.norm(info["command"])
+    distance_reward *= cmd_norm > 0.1  # No reward for zero commands.
+    return distance_reward
 

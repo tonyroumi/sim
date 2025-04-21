@@ -10,21 +10,22 @@ from src.locomotion.default_humanoid_legs.joystick import Joystick
 from src.config.sim import MJXConfig
 from src.config.agents import PPOConfig
 
+import hydra
 
-# --- STEP 2: Disable JIT + Run a step with raw values ---
-def main():
+@hydra.main(config_path="../config", config_name="config")
+def main(cfg):
     rng = jax.random.PRNGKey(0)
-    robot = Robot('default_humanoid_legs')
+    robot = Robot(cfg.robot.name)
 
-    EnvClass = get_env_class('default_humanoid_legs')
-    env_cfg = MJXConfig()
-    train_cfg = PPOConfig()
+    EnvClass = get_env_class(cfg.env.name)
+    env_cfg = cfg.sim
+    train_cfg = cfg.agent
 
     
     env = EnvClass(
-        'default_humanoid_legs',
+        cfg.robot.name,
         robot,
-        'flat', 
+        cfg.env.terrain, 
         env_cfg)
 
     with disable_jit():

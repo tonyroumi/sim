@@ -9,38 +9,26 @@ TASK="locomotion"
 ENV="humanoid_legs"
 TERRAIN="flat"
 
-# Define agent parameters
-AGENT_TYPE="ppo"
-NUM_EVALS=1000
-EPISODE_LENGTH=1000
-UNROLL_LENGTH=20
-NUM_MINIBATCHES=4
-NUM_UPDATES_PER_BATCH=4
-DISCOUNTING=0.97
-LEARNING_RATE=1e-4
-ENTROPY_COST=5e-4
-CLIPPING_EPSILON=0.2
-NUM_ENVS=1024
-BATCH_SIZE=256
-SEED=42
-RENDER_INTERVAL=50
-NORMALIZE_OBS=true
-ACTION_REPEAT=1.0
-MAX_GRAD_NORM=1.0
-POLICY_LAYERS="[512,256,128]"
-VALUE_LAYERS="[512,256,128]"
-NUM_RESETS_PER_EVAL=1
+SEED=0
 
 # Video recording parameters
-VIDEO=true
-VIDEO_LENGTH=10000000
-VIDEO_INTERVAL=100000
+VIDEO=false
+VIDEO_LENGTH=1000
+VIDEO_INTERVAL=10000000
 
 # Checkpoint loading parameters
 RESUME=false
 LOAD_RUN=""
 CHECKPOINT=""
 LOG_PROJECT_NAME=""
+
+# Define hyperparameter arrays for sweeping
+LEARNING_RATES=(1e-4 2e-4 3e-4)
+ENTROPY_COSTS=(1e-2 2e-2 3e-2)
+
+# Convert arrays to comma-separated strings for Hydra
+LEARNING_RATES_STR=$(IFS=,; echo "${LEARNING_RATES[*]}")
+ENTROPY_COSTS_STR=$(IFS=,; echo "${ENTROPY_COSTS[*]}")
 
 # Run the training script with Hydra parameters
 python $TRAIN_SCRIPT \
@@ -52,4 +40,9 @@ python $TRAIN_SCRIPT \
     --checkpoint="$CHECKPOINT" \
     --log_project_name="$LOG_PROJECT_NAME" \
     --video \
+    -m \
+    hydra.sweep.dir=multirun \
+    hydra.sweep.subdir=\${agent.learning_rate}_\${agent.entropy_cost} \
+    agent.learning_rate=$LEARNING_RATES_STR \
+    agent.entropy_cost=$ENTROPY_COSTS_STR
     # --resume \

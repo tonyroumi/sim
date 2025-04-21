@@ -1,6 +1,7 @@
 """ Script to train RL agent with Brax"""
 
 import argparse
+from pathlib import Path
 import sys
 import cli_args
 import jax
@@ -146,7 +147,10 @@ def main(cfg: DictConfig):
     #Save robot configuration
     with open(logdir.parent / "robot_config.json", "w") as f:
         json.dump(robot.config, f, indent=4)
-
+    
+    #Save robot xml
+    with open(logdir.parent / Path(robot.name + ".xml"), "w") as f:
+        f.write(robot.xml)
 
     def policy_params_fn(current_step: int, make_policy: Any, params: Any):
         # save checkpoints
@@ -207,7 +211,7 @@ def main(cfg: DictConfig):
 
         last_ckpt_step = num_steps
 
-        episode_reward = float(metrics.get("episode_reward", 0))
+        episode_reward = float(metrics.get("eval/episode_reward", 0))
         if episode_reward > best_episode_reward:
             best_episode_reward = episode_reward
             best_ckpt_step = num_steps
@@ -226,8 +230,10 @@ def main(cfg: DictConfig):
     print(f"best checkpoint step: {best_ckpt_step}")
     print(f"best episode reward: {best_episode_reward}")
 
+
+    #Save best rollout
     print(f"Saving rollout for best checkpoint")
-    best_ckpt_path = os.path.join(logdir, "checkpoints", f"{best_ckpt_step}")
+    best_ckpt_path = os.path.join(logdir.parent, "best_policy", f"{best_ckpt_step}")
     best_policy_path = os.path.join(best_ckpt_path, "policy")
     save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
 
