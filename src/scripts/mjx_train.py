@@ -73,7 +73,30 @@ warnings.filterwarnings("ignore", category=UserWarning, module="absl")
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
-    robot = Robot(cfg.robot.name)
+
+    checkpoint_path = None
+    robot_xml_path = None
+    robot_config_path = None
+    if args_cli.resume:
+        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
+        print(f"Restoring from checkpoint: {checkpoint_path}") 
+
+        run_dir = checkpoint_path
+        while run_dir.name != "logs" and run_dir != run_dir.parent:
+            run_dir = run_dir.parent
+        run_dir = run_dir.parent
+        
+        robot_config_path = run_dir / "robot_config.json"
+        robot_xml_path = str(run_dir / (cfg.robot.name + ".xml"))
+
+        print("Successfully loaded configuration from previous run")
+
+    else:
+        print("No checkpoint provided. Training from scratch.")
+
+    robot = Robot(robot_name=cfg.robot.name, 
+                  config_path=robot_config_path,
+                  xml_path=robot_xml_path)
 
     EnvClass = get_env_class(cfg.env.name)
     env_cfg = cfg.sim
@@ -120,13 +143,6 @@ def main(cfg: DictConfig):
         name=run_name,
         config=OmegaConf.to_container(train_cfg)
     )
-    
-    checkpoint_path = None
-    if args_cli.resume:
-        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
-        print(f"Restoring from checkpoint: {checkpoint_path}") 
-    else:
-        print("No checkpoint provided. Training from scratch.")
 
     if args_cli.video:
         run_dir = logdir.parent

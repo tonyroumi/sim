@@ -19,9 +19,11 @@ class DefaultHumanoidEnv(PipelineEnv):
         self.add_noise = cfg.noise.add_noise
         self.add_domain_rand = cfg.domain_rand.add_domain_rand
 
-        self.xml_path = find_robot_file_path(robot.name, scene, '.xml')
+        scene_xml_path = find_robot_file_path(robot.name, scene, '.xml')
 
-        sys = mjcf.load(self.xml_path)
+        sys = mjcf.load(
+            scene_xml_path,
+        )
         sys = sys.tree_replace(
             {
                 "opt.timestep": cfg.sim.timestep,

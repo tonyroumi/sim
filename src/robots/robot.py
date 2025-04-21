@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 class Robot:
     """ This class defines data structure of a robot"""
 
-    def __init__(self, robot_name: str):
+    def __init__(self, robot_name: str, config_path: str = None, xml_path: str = None):
         """Initalizes a robot with specified configurations and paths
         
         Args:
@@ -17,12 +17,12 @@ class Robot:
         self.name = robot_name
 
         self.root_path = os.path.join(project_root, "src", "robots", robot_name)
-        self.config_path = os.path.join(self.root_path, "config.json")
+        self.config_path = os.path.join(self.root_path, "config.json") if config_path is None else config_path
+        self.xml_path = os.path.join(self.root_path, self.name + ".xml") if xml_path is None else xml_path
 
         with open(self.config_path, "r") as f:
             self.config = json.load(f)
         
-        self.xml_path = os.path.join(self.root_path, self.name + ".xml")
         with open(self.xml_path, "r") as f:
             self.xml = f.read()
 
