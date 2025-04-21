@@ -14,13 +14,11 @@ VIDEO=true
 VIDEO_LENGTH=1000
 VIDEO_INTERVAL=10000000
 
-LOG_PROJECT_NAME="default_humanoid_legs_locomotion""
+LOG_PROJECT_NAME="default_humanoid_legs_locomotion"
 
-# Run the training script with Hydra parameters
 python $TRAIN_SCRIPT \
     --video_length="$VIDEO_LENGTH" \
     --video_interval="$VIDEO_INTERVAL" \
     --task="$TASK" \
-    --seed="$SEED" \
     --log_project_name="$LOG_PROJECT_NAME" \
-    --video \
+    --video

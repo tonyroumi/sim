@@ -9,8 +9,6 @@ TASK="locomotion"
 ENV="humanoid_legs"
 TERRAIN="flat"
 
-SEED=0
-
 # Video recording parameters
 VIDEO_LENGTH=1000
 VIDEO_INTERVAL=10000000
@@ -20,7 +18,7 @@ LOG_PROJECT_NAME="default_humanoid_legs_locomotion"
 # Define hyperparameter arrays for sweeping
 LEARNING_RATES=(1e-4 2e-4 3e-4)
 ENTROPY_COSTS=(1e-2 2e-2 3e-2)
-TRACKING_SIGMAS=(0.5 1.0 5.0 50.0)
+TRACKING_SIGMAS=(1.0 5.0 10.0 50.0 100.0)
 
 
 # Convert arrays to comma-separated strings for Hydra
@@ -33,7 +31,6 @@ python $TRAIN_SCRIPT \
     --video_length="$VIDEO_LENGTH" \
     --video_interval="$VIDEO_INTERVAL" \
     --task="$TASK" \
-    --seed="$SEED" \
     --log_project_name="$LOG_PROJECT_NAME" \
     --video \
     -m \

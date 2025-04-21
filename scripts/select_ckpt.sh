@@ -4,8 +4,6 @@ export PYTHONPATH=$(pwd)
 # Define training script path
 TRAIN_SCRIPT="src/scripts/mjx_train.py"
 
-SEED=0
-
 # Video recording parameters
 VIDEO_LENGTH=1000
 VIDEO_INTERVAL=10000000
@@ -19,7 +17,7 @@ CONFIG_PATH="$CONFIG_DIR/.hydra"
 
 OVERRIDES=(
     #Reward scales
-    "sim.reward_scales.survival=0.0"
+    "sim.reward_scales.survival=1.0"
     "sim.reward_scales.lin_vel=2.5"
     "sim.reward_scales.ang_vel=1.0"
     "sim.reward_scales.torques=-2.5e-5"
@@ -29,12 +27,12 @@ OVERRIDES=(
     "sim.reward_scales.feet_clearance=0.0"
     "sim.reward_scales.feet_height=0.0"
     "sim.reward_scales.feet_phase=1.0"
-    "sim.reward_scales.stand_still=0.0"
+    "sim.reward_scales.stand_still=-1.0"
     "sim.reward_scales.distance_traveled=0.0"
     "sim.reward_scales.pose=-0.5"
     "sim.reward_scales.orientation=-0.5"
 
-    "sim.rewards.tracking_sigma=50.0"
+    "sim.rewards.tracking_sigma=5.0"
 
     # #Agent confnig
     # "agent.learning_rate=1e-4"
@@ -52,7 +50,6 @@ python $TRAIN_SCRIPT \
     --config-path="$CONFIG_DIR" \
     --config-name="config" \
     --checkpoint="$CHECKPOINT_PATH" \
-    --seed="$SEED" \
     "${OVERRIDES[@]}"
     
  

@@ -15,11 +15,11 @@ class MJXConfig:
 
     @dataclass
     class ObsConfig:
-        stack_obs: bool = False
+        stack_obs: bool = True
         frame_stack: int = 15
         c_frame_stack: int = 15
         num_single_obs: int = 52
-        num_single_privileged_obs: int = 67
+        num_single_privileged_obs: int = 88
 
     @dataclass
     class ObsScales:
@@ -37,28 +37,28 @@ class MJXConfig:
     @dataclass
     class RewardConfig:
         healthy_z_range: Tuple[float, float] = (0.7, 1.3)
-        tracking_sigma: float = 2.0
-        max_foot_height: float = 0.2
+        tracking_sigma: float = 50.0
+        max_foot_height: float = 0.25
 
     @dataclass
     class RewardScales:
-        lin_vel: float = 1.5
+        lin_vel: float = 1.0
         ang_vel: float = 0.5
         torques: float = -2.5e-5
         action_rate: float = -0.01
         energy: float = 0.0
         feet_slip: float = -0.25
         feet_clearance: float = 0.0
-        feet_height: float = 0.0
-        feet_phase: float = 1.0
-        stand_still: float = 0.0
+        feet_height: float = -0.05
+        feet_phase: float = 2.0
+        stand_still: float = -0.5
         survival: float = 10.0
         distance_traveled: float = 0.0
         pose: float = -0.5
         orientation: float = -1.0
     @dataclass
     class CommandsConfig:
-        resample_time: float = 5.0
+        resample_time: float = 6.0
         reset_time: float = 100.0  # No resetting by default
 
     @dataclass

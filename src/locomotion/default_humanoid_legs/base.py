@@ -17,6 +17,7 @@ class DefaultHumanoidEnv(PipelineEnv):
         self.robot = robot
         self.cfg = cfg
         self.add_noise = cfg.noise.add_noise
+        self.stack_obs = cfg.obs.stack_obs
         self.add_domain_rand = cfg.domain_rand.add_domain_rand
 
         scene_xml_path = find_robot_file_path(robot.name, scene, '.xml')

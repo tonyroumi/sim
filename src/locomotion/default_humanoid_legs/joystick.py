@@ -318,7 +318,7 @@ class Joystick(DefaultHumanoidEnv):
 
     
         privileged_obs = jp.hstack([
-            obs, #(32,)
+            obs, #(50,)
             acceleromter, #(3,)
             global_ang_vel, #(3,)
             feet_vel, #(2,)
@@ -334,14 +334,15 @@ class Joystick(DefaultHumanoidEnv):
             obs += self.obs_noise_scale * jax.random.normal(obs_rng, obs.shape)
         
         #check this
-        # obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
+        if self.stack_obs:
+            obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
 
-        # privileged_obs = (
-        #     jp.roll(privileged_obs_history, privileged_obs.size)
-        #     .at[: privileged_obs.size]
-        #     .set(privileged_obs)
-        # )
-        
+            privileged_obs = (
+                jp.roll(privileged_obs_history, privileged_obs.size)
+                .at[: privileged_obs.size]
+                .set(privileged_obs)
+            )
+            
         return {
             "state": obs, 
             "privileged_state": privileged_obs
