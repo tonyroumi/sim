@@ -8,7 +8,6 @@ class MJXConfig:
 
     @dataclass
     class SimConfig:
-        pass
         timestep: float = 0.004
         solver: int = 2
         iterations: int = 1 
@@ -16,6 +15,7 @@ class MJXConfig:
 
     @dataclass
     class ObsConfig:
+        stack_obs: bool = False
         frame_stack: int = 15
         c_frame_stack: int = 15
         num_single_obs: int = 52
@@ -23,10 +23,10 @@ class MJXConfig:
 
     @dataclass
     class ObsScales:
-        lin_vel: float = 2.0
+        lin_vel: float = 1.0
         ang_vel: float = 1.0
         motor_pos: float = 1.0
-        motor_vel: float = 0.05
+        motor_vel: float = 1.0
         euler: float = 1.0
 
     @dataclass
@@ -36,33 +36,39 @@ class MJXConfig:
 
     @dataclass
     class RewardConfig:
-        healthy_z_range: Tuple[float, float] = (0.7, 1.5)
+        healthy_z_range: Tuple[float, float] = (0.7, 1.3)
         tracking_sigma: float = 0.5
+        max_foot_height: float = 0.1
 
     @dataclass
     class RewardScales:
         lin_vel: float = 1.0  
-        ang_vel: float = 1.0  
-        torques: float = 0.0
-        action_rate: float = 0.0
-        energy: float = -1e-2
-        survival: float = 10.0
+        ang_vel: float = 0.5 
+        torques: float = -2.5e-5
+        action_rate: float = -0.01
+        energy: float = 0.0
+        feet_slip: float = -0.25
+        feet_clearance: float = 0.0
+        feet_height: float = 0.0
+        feet_phase: float = 1.0
+        stand_still: float = -1.0
+        survival: float = 3.0
 
     @dataclass
     class CommandsConfig:
-        resample_time: float = 3.0
+        resample_time: float = 10 
         reset_time: float = 100.0  # No resetting by default
 
     @dataclass
     class DomainRandConfig:
         add_domain_rand: bool = False
-        lin_vel_x: Tuple[float, float] = (-1.0, 1.0)
-        lin_vel_y: Tuple[float, float] = (-1.0, 1.0)
-        ang_vel_yaw: Tuple[float, float] = (-1.0, 1.0)
+        lin_vel_x: Tuple[float, float] = (-0.5, 1.5)
+        lin_vel_y: Tuple[float, float] = (-0.5, 1.5)
+        ang_vel_yaw: Tuple[float, float] = (-0.5, 1.5)
 
     @dataclass
     class NoiseConfig:
-        add_noise: bool = True
+        add_noise: bool = False
         action_noise: float = 0.02
         obs_noise_scale: float = 0.05
         motor_pos: float = 1.0

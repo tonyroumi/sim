@@ -61,11 +61,18 @@ class Joystick(PipelineEnv):
         self.nq = self.sys.nq
         self.nv = self.sys.nv
 
-
         feet_link_mask = jp.array(
             np.char.find(self.sys.link_names, "foot") >= 0
         )
         self.feet_link_ids = jp.arange(self.sys.num_links())[feet_link_mask]
+        
+        self.feet_body_ids = jp.array(
+            [
+                support.name2id(self.sys, mujoco.mjtObj.mjOBJ_BODY, name)
+                for name in ["foot_left", "foot_right"]
+            ]
+        )
+        self.torso_body_id = support.name2id(self.sys, mujoco.mjtObj.mjOBJ_BODY, "torso")
 
         self.motor_indices = jp.array(
             [
@@ -124,6 +131,7 @@ class Joystick(PipelineEnv):
 
 
         self.healthy_z_range = self.cfg.rewards.healthy_z_range
+        self.max_foot_height = self.cfg.rewards.max_foot_height
         self.tracking_sigma = self.cfg.rewards.tracking_sigma
 
 
@@ -148,8 +156,6 @@ class Joystick(PipelineEnv):
         phase_dt = 2 * jp.pi * self.dt * gait_freq #Change in phase per time step (how gait phase evolves over time)
         phase = jp.array([0, jp.pi]) #One leg starts at beginning of gait cycle, other starts at mid-gait cycle (natural alternation between two legs)
 
-        contact = check_feet_contact(pipeline_state, self.feet_link_ids)
-
         #Generate a random command
         rng, cmd_rng = jax.random.split(rng_cmd)
         cmd = self.sample_command(cmd_rng) #[lin_vel_x, lin_vel_y, ang_vel_yaw]
@@ -160,7 +166,9 @@ class Joystick(PipelineEnv):
             "phase": phase,
             "phase_dt": phase_dt,
             "command": cmd,
-            "last_contact": contact,
+            "first_contact": jp.zeros(2),
+            "last_contact": jp.zeros(2),
+            "swing_peak": jp.zeros(2),
             "last_act": jp.zeros(self.action_size),
             "last_last_act": jp.zeros(self.action_size),
             "feet_air_time": jp.zeros(2),
@@ -191,7 +199,7 @@ class Joystick(PipelineEnv):
             pipeline_state, obs, reward, done, metrics, state_info
         )
 
-    def step(self, state: State, action: jp.ndarray) -> State:
+    def step(self, state: State, action: jax.Array) -> State:
         """ Performs a step in the environment"""
 
         rng, cmd_rng = jax.random.split(
@@ -206,7 +214,7 @@ class Joystick(PipelineEnv):
             # add rand
             pass
 
-        torso_height = pipeline_state.x.pos[0, 2] 
+        torso_height = pipeline_state.x.pos[self.torso_body_id, 2] 
         done = jp.logical_or(
             torso_height < self.healthy_z_range[0],
             torso_height > self.healthy_z_range[1],
@@ -224,6 +232,21 @@ class Joystick(PipelineEnv):
         torso_euler_delta = torso_euler - state.info["last_torso_euler"]
         torso_euler_delta = (torso_euler_delta + jp.pi) % (2 * jp.pi) - jp.pi
         torso_euler = state.info["last_torso_euler"] + torso_euler_delta
+
+        contact = check_feet_contact(pipeline_state, self.feet_link_ids)
+
+        contact_bool = contact.astype(bool)
+        last_contact_bool = state.info["last_contact"].astype(bool)
+        contact_filt = contact_bool | last_contact_bool
+        state.info["first_contact"] = ((state.info["feet_air_time"] > 0.0) * contact_filt).astype(jp.float32)
+        state.info["feet_air_time"] += self.dt
+        p_f = pipeline_state.xpos[self.feet_body_ids] 
+        p_fz = p_f[...,-1]
+        state.info["swing_peak"] = jp.maximum(state.info["swing_peak"], p_fz)
+
+        state.info["feet_air_time"] *= ~contact
+        state.info["last_contact"] = contact.astype(jp.float32)  
+        state.info["swing_peak"] *= ~contact
 
         reward_dict = self._compute_reward(pipeline_state, state.info, action)
         reward = sum(reward_dict.values()) * self.dt
@@ -247,7 +270,6 @@ class Joystick(PipelineEnv):
             done | (state.info["step"] > self.reset_steps), 0, state.info["step"]
         )
 
-        state.info["last_contact"] = check_feet_contact(pipeline_state, self.feet_link_ids)
         state.metrics.update(reward_dict)
 
         return state.replace(
@@ -277,8 +299,8 @@ class Joystick(PipelineEnv):
         torso_quat = pipeline_state.x.rot[0] 
 
         #equivalent to gyro or linvel. track only torso movement
-        torso_lin_vel = rotate_vec(pipeline_state.xd.vel[0], quat_inv(torso_quat)) 
-        torso_ang_vel = rotate_vec(pipeline_state.xd.ang[0], quat_inv(torso_quat))
+        torso_lin_vel = pipeline_state.cvel[self.torso_body_id,3:] #rotate_vec(pipeline_state.xd.vel[0], quat_inv(torso_quat)) 
+        torso_ang_vel = pipeline_state.cvel[self.torso_body_id,0:3] #rotate_vec(pipeline_state.xd.ang[0], quat_inv(torso_quat))
 
         #tracks the changes in euler position of torso
         torso_euler = quat2euler(torso_quat)
@@ -303,8 +325,8 @@ class Joystick(PipelineEnv):
         ])
 
         actuator_forces = pipeline_state.actuator_force
-        root_height = pipeline_state.q[2]
-        feet_vel = jp.array([pipeline_state.cvel[4,3], pipeline_state.cvel[7,3]]) 
+        root_height = pipeline_state.xpos[self.torso_body_id, 2]
+        feet_vel = pipeline_state.cvel[self.feet_body_ids,3] 
 
     
         privileged_obs = jp.hstack([
