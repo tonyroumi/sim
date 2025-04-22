@@ -362,53 +362,32 @@ class Joystick(DefaultHumanoidEnv):
         """ Returns the observation"""
         gyro = self.get_gyro(pipeline_state)
         info["rng"], noise_rng = jax.random.split(info["rng"], 2)
-        noisy_gyro = (
-            gyro
-            + (2 * jax.random.uniform(noise_rng, shape=gyro.shape) - 1)
-            * self.cfg.noise.level
-            * self.cfg.noise.gyro
-        )
+        noise = (2 * jax.random.uniform(noise_rng, shape=gyro.shape) - 1) * self.cfg.noise.level * self.cfg.noise.gyro
+        noisy_gyro = jp.where(self.add_noise, gyro + noise, gyro)
         
         gravity = pipeline_state.site_xmat[self.sys.mj_model.site("imu").id] @ jp.array([0,0, -1])
         info["rng"], noise_rng = jax.random.split(info["rng"], 2)
-        noisy_gravity = (
-            gravity
-            + (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1)
-            * self.cfg.noise.level
-            * self.cfg.noise.gravity
-        )
+        noise = (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1) * self.cfg.noise.level * self.cfg.noise.gravity
+        noisy_gravity = jp.where(self.add_noise, gravity + noise, gravity)
 
         joint_angles = pipeline_state.qpos[7:]
         info["rng"], noise_rng = jax.random.split(info["rng"], 2)
-        noisy_joint_angles = (
-            joint_angles
-            + (2 * jax.random.uniform(noise_rng, shape=joint_angles.shape) - 1)
-            * self.cfg.noise.level
-            * self.qpos_noise_scale
-        )
+        noise = (2 * jax.random.uniform(noise_rng, shape=joint_angles.shape) - 1) * self.cfg.noise.level * self.qpos_noise_scale
+        noisy_joint_angles = jp.where(self.add_noise, joint_angles + noise, joint_angles)
 
         joint_vel = pipeline_state.qvel[6:]
         info["rng"], noise_rng = jax.random.split(info["rng"], 2)
-        noisy_joint_vel = (
-            joint_vel
-            + (2 * jax.random.uniform(noise_rng, shape=joint_vel.shape) - 1)
-            * self.cfg.noise.level
-            * self.cfg.noise.joint_vel
-        )
+        noise = (2 * jax.random.uniform(noise_rng, shape=joint_vel.shape) - 1) * self.cfg.noise.level * self.cfg.noise.joint_vel
+        noisy_joint_vel = jp.where(self.add_noise, joint_vel + noise, joint_vel)
+
+        lin_vel = self.get_local_linvel(pipeline_state)
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noise = (2 * jax.random.uniform(noise_rng, shape=lin_vel.shape) - 1) * self.cfg.noise.level * self.cfg.noise.lin_vel
+        noisy_lin_vel = jp.where(self.add_noise, lin_vel + noise, lin_vel)
 
         cos = jp.cos(info["phase"])
         sin = jp.sin(info["phase"])
         phase = jp.concatenate([cos, sin])
-
-        lin_vel = self.get_local_linvel(pipeline_state)
-        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
-        noisy_lin_vel = (
-            lin_vel
-            + (2 * jax.random.uniform(noise_rng, shape=lin_vel.shape) - 1)
-            * self.cfg.noise.level
-            * self.cfg.noise.lin_vel
-        )
-
 
         obs = jp.hstack([
             noisy_lin_vel, #(3,)
