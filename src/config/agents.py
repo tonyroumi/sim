@@ -4,19 +4,19 @@ from typing import Tuple
 @dataclass
 class PPOConfig:
     name: str = "ppo"
-    num_timesteps: int = 100_000_000
-    num_evals: int = 1000
+    num_timesteps: int = 200_000_000
+    num_evals: int = 100
     episode_length: int = 1000
     unroll_length: int = 20
-    num_minibatches: int = 4
+    num_minibatches: int = 32
     num_updates_per_batch: int = 4
     discounting: float = 0.97
-    learning_rate: float = 1e-4
-    entropy_cost: float = 5e-4
+    learning_rate: float = 3e-4
+    entropy_cost: float = 1e-2
     clipping_epsilon: float = 0.2
-    num_envs: int = 1024
+    num_envs: int = 8192
     batch_size: int = 256
-    seed: int = 42
+    seed: int = 0
     render_interval: int = 50
     normalize_observations: bool = True
     action_repeat: float = 1.0

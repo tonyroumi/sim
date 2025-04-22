@@ -1,6 +1,7 @@
 .vscode
 
 outputs
+multirun
 
 .pycache
 

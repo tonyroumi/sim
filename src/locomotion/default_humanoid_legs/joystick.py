@@ -14,8 +14,13 @@ from mujoco.mjx._src import support  # type: ignore
 from src.utils.file_utils import find_robot_file_path
 from src.utils.math_utils import quat2euler, quat_inv, rotate_vec
 from src.rewards import get_reward_function
+from src.tools.collision import check_feet_contact
+from mujoco.mjx._src import math
 
-class Joystick(PipelineEnv):
+from src.locomotion.default_humanoid_legs.base import DefaultHumanoidEnv
+
+
+class Joystick(DefaultHumanoidEnv):
     def __init__(
             self,
             name: str,
@@ -25,27 +30,8 @@ class Joystick(PipelineEnv):
             **kwargs: Any,
     ):
         """ Initalizes the environment with the specified configuration and robot parameters"""
-        self.name = name
-        self.robot = robot
-        self.cfg = cfg
-        self.add_noise = cfg.noise.add_noise
-        self.add_domain_rand = cfg.domain_rand.add_domain_rand
 
-        xml_path = find_robot_file_path(robot.name, scene, '.xml')
-
-        sys = mjcf.load(xml_path)
-        sys = sys.tree_replace(
-            {
-                "opt.timestep": cfg.sim.timestep,
-                "opt.solver": cfg.sim.solver,
-                "opt.iterations": cfg.sim.iterations,
-                "opt.ls_iterations": cfg.sim.ls_iterations,
-            }
-        )
-        kwargs["n_frames"] = cfg.action.n_frames
-        kwargs["backend"] = "mjx"
-
-        super().__init__(sys, **kwargs)
+        super().__init__(name, robot, scene, cfg, **kwargs)
 
         self._init_env()
         self._init_reward()
@@ -60,29 +46,62 @@ class Joystick(PipelineEnv):
         self.nq = self.sys.nq
         self.nv = self.sys.nv
 
-
         feet_link_mask = jp.array(
             np.char.find(self.sys.link_names, "foot") >= 0
         )
         self.feet_link_ids = jp.arange(self.sys.num_links())[feet_link_mask]
 
+        self._weights = jp.array([
+        1.0, 1.0, 0.01, 0.01, 1.0, 1.0,  # left leg.
+        1.0, 1.0, 0.01, 0.01, 1.0, 1.0,  # right leg.
+    ])
+
+        foot_linvel_sensor_adr = []
+        self.feet_site_id = [
+            support.name2id(self.sys, mujoco.mjtObj.mjOBJ_SITE, name)
+            for name in ["l_foot", "r_foot"]
+        ]
+        for site in ["l_foot", "r_foot"]:
+            sensor_id = self.sys.mj_model.sensor(f"{site}_global_linvel").id
+            sensor_adr = self.sys.mj_model.sensor_adr[sensor_id]
+            sensor_dim = self.sys.mj_model.sensor_dim[sensor_id]
+            foot_linvel_sensor_adr.append(
+                list(range(sensor_adr, sensor_adr + sensor_dim))
+            )
+        self.feet_pos_sensor_names = ("l_foot", "r_foot")
+
+        hip_indices = []
+        hip_joint_names = ["HR", "HAA"]
+        for side in ["LL", "LR"]:
+            for joint_name in hip_joint_names:
+                hip_indices.append(
+                    self.sys.mj_model.joint(f"{side}_{joint_name}").qposadr - 7
+                )
+        self.hip_indices = jp.array(hip_indices)
+
+        knee_indices = []
+        for side in ["LL", "LR"]:
+            knee_indices.append(self.sys.mj_model.joint(f"{side}_KFE").qposadr - 7)
+        self.knee_indices = jp.array(knee_indices)
+
+
+
+        self._foot_linvel_sensor_adr = jp.array(foot_linvel_sensor_adr)
+        
+        self.feet_body_ids = jp.array(
+            [
+                support.name2id(self.sys, mujoco.mjtObj.mjOBJ_BODY, name)
+                for name in ["foot_left", "foot_right"]
+            ]
+        )
+        self.torso_body_id = support.name2id(self.sys, mujoco.mjtObj.mjOBJ_BODY, "torso")
+
+        self.torso_sensor_id = support.name2id(self.sys, mujoco.mjtObj.mjOBJ_SENSOR, "torso")
+
         self.motor_indices = jp.array(
             [
                 support.name2id(self.sys, mujoco.mjtObj.mjOBJ_JOINT, name)
                 for name in self.robot.motor_ordering
-            ]
-        )
-        
-        self.obs_noise_scale = self.cfg.noise.obs_noise_scale * jp.concatenate(
-            [
-                jp.ones(3) * self.cfg.noise.lin_vel,
-                jp.ones(3) * self.cfg.noise.ang_vel,
-                jp.ones(3) * self.cfg.noise.euler,
-                jp.zeros(self.action_size) * self.cfg.noise.motor_pos,
-                jp.ones(self.action_size) * self.cfg.noise.motor_vel,
-                jp.zeros(4),
-                jp.zeros(3),
-                jp.zeros(self.action_size)
             ]
         )
 
@@ -95,12 +114,26 @@ class Joystick(PipelineEnv):
         self.num_privileged_obs_history = self.cfg.obs.c_frame_stack
         self.obs_size = self.cfg.obs.num_single_obs
         self.privileged_obs_size = self.cfg.obs.num_single_privileged_obs
-        self.obs_scales = self.cfg.obs_scales
 
         self.resample_time = self.cfg.commands.resample_time
         self.resample_steps = int(self.resample_time / self.dt)
         self.reset_time = self.cfg.commands.reset_time
         self.reset_steps = int(self.reset_time / self.dt)
+
+        self.push_interval_range = self.cfg.push.interval_range
+        self.push_magnitude_range = self.cfg.push.magnitude_range
+
+        qpos_noise_scale = np.zeros(12)
+        hip_ids = [0, 1, 2, 6, 7, 8]
+        kfe_ids = [3, 9]
+        ffe_ids = [4, 10]
+        faa_ids = [5, 11]
+        qpos_noise_scale[hip_ids] = self.cfg.noise.hip_pos
+        qpos_noise_scale[kfe_ids] = self.cfg.noise.kfe_pos
+        qpos_noise_scale[ffe_ids] = self.cfg.noise.ffe_pos
+        qpos_noise_scale[faa_ids] = self.cfg.noise.faa_pos
+        self.qpos_noise_scale = jp.array(qpos_noise_scale)
+
 
     def _init_reward(self) -> None:
         """Initializes the reward system by filtering and scaling reward components.
@@ -123,19 +156,37 @@ class Joystick(PipelineEnv):
 
 
         self.healthy_z_range = self.cfg.rewards.healthy_z_range
+        self.max_foot_height = self.cfg.rewards.max_foot_height
         self.tracking_sigma = self.cfg.rewards.tracking_sigma
+        self.base_height_target = self.cfg.rewards.base_height_target
 
 
     def reset(self, rng: jp.ndarray) -> State:
         """ Resets the environment to the initial state"""
-        (
-        rng,
-        rng_cmd,
-        rng_gait,
-        ) = jax.random.split(rng, 3)
-
         qpos = self.init_q.copy() 
         qvel = jp.zeros(self.nv)
+
+        # x=+U(-0.5, 0.5), y=+U(-0.5, 0.5), yaw=U(-3.14, 3.14).
+        rng, key = jax.random.split(rng)
+        dxy = jax.random.uniform(key, (2,), minval=-0.5, maxval=0.5)
+        qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
+        rng, key = jax.random.split(rng)
+        yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
+        quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw) 
+        new_quat = math.quat_mul(qpos[3:7], quat)
+        qpos = qpos.at[3:7].set(new_quat)
+
+        # qpos[7:]=*U(0.5, 1.5)
+        rng, key = jax.random.split(rng)
+        qpos = qpos.at[7:].set(
+            qpos[7:] * jax.random.uniform(key, (12,), minval=0.5, maxval=1.5)
+        )
+
+        # d(xyzrpy)=U(-0.5, 0.5)
+        rng, key = jax.random.split(rng)
+        qvel = qvel.at[0:6].set(
+            jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5)
+        )
 
         #Here we can include some randomizations like joint positions, velocities of base, and position of base and orientation.
 
@@ -143,27 +194,44 @@ class Joystick(PipelineEnv):
 
         # We can take either a phase based walking approach or a trajectory based walking approach. (ZMP)
         # Phase, freq=U(1.25, 1.5) : Gate cycle
-        gait_freq = jax.random.uniform(rng_gait, (1,), minval=1.25, maxval=1.5)
+        rng, key = jax.random.split(rng)
+        gait_freq = jax.random.uniform(key, (1,), minval=1.25, maxval=1.5)
         phase_dt = 2 * jp.pi * self.dt * gait_freq #Change in phase per time step (how gait phase evolves over time)
         phase = jp.array([0, jp.pi]) #One leg starts at beginning of gait cycle, other starts at mid-gait cycle (natural alternation between two legs)
 
         #Generate a random command
-        rng, cmd_rng = jax.random.split(rng_cmd)
+        rng, cmd_rng = jax.random.split(rng)
         cmd = self.sample_command(cmd_rng) #[lin_vel_x, lin_vel_y, ang_vel_yaw]
+
+        # Sample push interval.
+        rng, push_rng = jax.random.split(rng)
+        push_interval = jax.random.uniform(
+            push_rng,
+            minval=self.push_interval_range[0],
+            maxval=self.push_interval_range[1],
+        )
+        push_interval_steps = jp.round(push_interval / self.dt).astype(jp.int32)
 
 
         state_info = {
             "rng": rng,
-            "phase": phase,
-            "phase_dt": phase_dt,
-            "command": cmd,
-            # "contact": jp.zeros(2),
-            "last_act": jp.zeros(self.action_size),
-            "last_last_act": jp.zeros(self.action_size),
-            # "feet_air_time": jp.zeros(2),
-            "last_torso_euler": jp.zeros(3),
-            "done": False,
             "step": 0,
+            "done": False,
+            "command": cmd,
+            "last_act": jp.zeros(self.nu),
+            "last_last_act": jp.zeros(self.nu),
+            "motor_targets": jp.zeros(self.nu),
+            "feet_air_time": jp.zeros(2),
+            "first_contact": jp.zeros(2, dtype=jp.float32),
+            "last_contact": jp.zeros(2, dtype=jp.float32),
+            "swing_peak": jp.zeros(2),
+            # Phase related.
+            "phase_dt": phase_dt,
+            "phase": phase,
+            # Push related.
+            "push": jp.array([0.0, 0.0]),
+            "push_step": 0,
+            "push_interval_steps": push_interval_steps,
         }
 
         obs_history = jp.zeros(self.num_obs_history * self.obs_size)
@@ -181,58 +249,81 @@ class Joystick(PipelineEnv):
         reward, done, zero = jp.zeros(3)
 
         metrics = {}
-        # for k in self.reward_names:
-        #     metrics[f"reward/{k}"] = zero
+        for k in self.reward_names:
+            metrics[k] = zero
+        metrics["swing_peak"] = jp.zeros(())
         
         return State(
             pipeline_state, obs, reward, done, metrics, state_info
         )
 
-    def step(self, state: State, action: jp.ndarray) -> State:
+    def step(self, state: State, action: jax.Array) -> State:
         """ Performs a step in the environment"""
-
-        rng, cmd_rng = jax.random.split(
-            state.info["rng"], 2
+        
+        
+        state.info["rng"], push1_rng, push2_rng = jax.random.split(
+            state.info["rng"], 3
         )
-        # apply a push if desired
+        push_theta = jax.random.uniform(push1_rng, maxval=2 * jp.pi)
+        push_magnitude = jax.random.uniform(
+            push2_rng,
+            minval=self.push_magnitude_range[0],
+            maxval=self.push_magnitude_range[1],
+        )
+        push = jp.array([jp.cos(push_theta), jp.sin(push_theta)])
+        push *= (
+            jp.mod(state.info["push_step"] + 1, state.info["push_interval_steps"])
+            == 0
+        )
+        push *= self.add_push
+        qvel = state.pipeline_state.qd
+        qvel = qvel.at[:2].set(push * push_magnitude + qvel[:2])
+        state.tree_replace({"pipeline_state.qd": qvel})
+
+
         motor_targets = self.default_pose + action * self.cfg.action.action_scale
-
         pipeline_state = self.pipeline_step(state.pipeline_state, motor_targets)
+        state.info["motor_targets"] = motor_targets
 
-        if self.add_domain_rand:
-            # add rand
-            pass
+        contact = check_feet_contact(pipeline_state, self.feet_link_ids)
 
-        torso_height = pipeline_state.x.pos[0, 2] 
-        done = jp.logical_or(
-            torso_height < self.healthy_z_range[0],
-            torso_height > self.healthy_z_range[1],
-        )
-        state.info["done"] = done
+        contact_bool = contact.astype(bool)
+        last_contact_bool = state.info["last_contact"].astype(bool)
+        contact_filt = contact_bool | last_contact_bool
+        state.info["first_contact"] = ((state.info["feet_air_time"] > 0.0) * contact_filt).astype(jp.float32)
+        state.info["feet_air_time"] += self.dt
+        #check these values
+        p_f = pipeline_state.x.pos[self.feet_link_ids] 
+        p_fz = p_f[...,-1]
+        state.info["swing_peak"] = jp.maximum(state.info["swing_peak"], p_fz)
 
+        state.info["feet_air_time"] *= ~contact
+        state.info["last_contact"] = contact.astype(jp.float32)  
+        state.info["swing_peak"] *= ~contact
+        
         obs = self._get_obs(
             pipeline_state,
             state.info,
             state.obs['state'],
             state.obs['privileged_state'],
-        )
+        )        
 
-        torso_euler = quat2euler(pipeline_state.x.rot[0])
-        torso_euler_delta = torso_euler - state.info["last_torso_euler"]
-        torso_euler_delta = (torso_euler_delta + jp.pi) % (2 * jp.pi) - jp.pi
-        torso_euler = state.info["last_torso_euler"] + torso_euler_delta
+        done = self.get_termination(pipeline_state)
+        state.info["done"] = done
 
         reward_dict = self._compute_reward(pipeline_state, state.info, action)
-        reward = sum(reward_dict.values()) * self.dt
+        reward = jp.clip(sum(reward_dict.values()) * self.dt, 0.0, 10000.0)
+        state.metrics["swing_peak"] = jp.mean(state.info["swing_peak"])
+
+        state.info["push"] = push
+        state.info["step"] += 1
+        state.info["push_step"] += 1
 
         phase_tp1 = state.info["phase"] + state.info["phase_dt"]
         state.info["phase"] = jp.fmod(phase_tp1 + jp.pi, 2 * jp.pi) - jp.pi
         state.info["last_last_act"] = state.info["last_act"].copy()
         state.info["last_act"] = action.copy()
-        state.info["last_torso_euler"] = torso_euler
-        state.info["rng"] = rng
-        state.info["step"] += 1
-
+        state.info["rng"], cmd_rng = jax.random.split(state.info["rng"])
         state.info["command"] = jax.lax.cond(
             state.info["step"] % self.resample_steps == 0,
             lambda: self.sample_command(cmd_rng),
@@ -243,7 +334,8 @@ class Joystick(PipelineEnv):
         state.info["step"] = jp.where(
             done | (state.info["step"] > self.reset_steps), 0, state.info["step"]
         )
-        # state.metrics.update(reward_dict)
+
+        state.metrics.update(reward_dict)
 
         return state.replace(
             pipeline_state = pipeline_state,
@@ -251,7 +343,15 @@ class Joystick(PipelineEnv):
             reward = reward,
             done = done.astype(jp.float32),
         )
-
+    
+    def get_termination(self, pipeline_state: base.State) -> jax.Array:
+        """Returns a boolean array indicating whether the termination condition is met."""
+        torso_height = pipeline_state.xpos[self.torso_body_id, 2] 
+        
+        return jp.logical_or(
+            torso_height < self.healthy_z_range[0],
+            torso_height > self.healthy_z_range[1],
+        )
     def _get_obs(
             self,
             pipeline_state: base.State,
@@ -260,77 +360,98 @@ class Joystick(PipelineEnv):
             privileged_obs_history: jax.Array,
     ) -> jp.ndarray:
         """ Returns the observation"""
-        rng, obs_rng = jax.random.split(info["rng"], 2)
+        gyro = self.get_gyro(pipeline_state)
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_gyro = (
+            gyro
+            + (2 * jax.random.uniform(noise_rng, shape=gyro.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.gyro
+        )
         
-        motor_pos = pipeline_state.q[7:]
-        motor_pos_delta = (
-            motor_pos - self.default_pose
+        gravity = pipeline_state.site_xmat[self.sys.mj_model.site("imu").id] @ jp.array([0,0, -1])
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_gravity = (
+            gravity
+            + (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.gravity
         )
 
-        motor_vel = pipeline_state.qd[6:]
+        joint_angles = pipeline_state.qpos[7:]
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_joint_angles = (
+            joint_angles
+            + (2 * jax.random.uniform(noise_rng, shape=joint_angles.shape) - 1)
+            * self.cfg.noise.level
+            * self.qpos_noise_scale
+        )
 
-        torso_quat = pipeline_state.x.rot[0] 
+        joint_vel = pipeline_state.qvel[6:]
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_joint_vel = (
+            joint_vel
+            + (2 * jax.random.uniform(noise_rng, shape=joint_vel.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.joint_vel
+        )
 
-        #equivalent to gyro or linvel. track only torso movement
-        torso_lin_vel = rotate_vec(pipeline_state.xd.vel[0], quat_inv(torso_quat)) 
-        torso_ang_vel = rotate_vec(pipeline_state.xd.ang[0], quat_inv(torso_quat))
-
-        #tracks the changes in euler position of torso
-        torso_euler = quat2euler(torso_quat)
-        torso_euler_delta = torso_euler - info["last_torso_euler"]
-        torso_euler_delta = (torso_euler_delta + jp.pi) % (2 * jp.pi) - jp.pi
-        torso_euler = info["last_torso_euler"] + torso_euler_delta
-
-        #tracks the phase of the gait cycle
         cos = jp.cos(info["phase"])
         sin = jp.sin(info["phase"])
         phase = jp.concatenate([cos, sin])
 
+        lin_vel = self.get_local_linvel(pipeline_state)
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_lin_vel = (
+            lin_vel
+            + (2 * jax.random.uniform(noise_rng, shape=lin_vel.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.lin_vel
+        )
+
+
         obs = jp.hstack([
-            torso_lin_vel * self.obs_scales.lin_vel, #(3,)
-            torso_ang_vel * self.obs_scales.ang_vel, #(3,)
-            torso_euler * self.obs_scales.euler, #(3,)
-            motor_pos_delta * self.obs_scales.motor_pos, #(12,)
-            motor_vel * self.obs_scales.motor_vel, #(12,)
-            phase, #(4,)
+            noisy_lin_vel, #(3,)
+            noisy_gyro, #(3,)
+            noisy_gravity, #(3,)
             info["command"], #(3,)
+            noisy_joint_angles - self.default_pose, #(12,)
+            noisy_joint_vel,
             info["last_act"], #(12,)
+            phase, #(2,)
         ])
+
+        acceleromter = self.get_accelerometer(pipeline_state) #(3,)
+        global_ang_vel = self.get_global_angvel(pipeline_state) #(3,)
+        feet_vel = pipeline_state.sensordata[self._foot_linvel_sensor_adr].ravel()
+        root_height = pipeline_state.qpos[2]
 
         actuator_forces = pipeline_state.actuator_force
-        root_height = pipeline_state.q[2]
-        feet_vel = pipeline_state.xd.vel[self.feet_link_ids, 0] #I think this is the velocity of the feet in the x direction. Check in case
-
     
         privileged_obs = jp.hstack([
-            torso_lin_vel * self.obs_scales.lin_vel, #(3,)
-            torso_ang_vel * self.obs_scales.ang_vel, #(3,)
-            torso_euler * self.obs_scales.euler, #(3,)
-            motor_pos_delta * self.obs_scales.motor_pos, #(12,)
-            motor_vel * self.obs_scales.motor_vel, #(12,)
-            phase, #(4,)
-            actuator_forces, #(12,)
+            obs, #(50,)
+            gyro, #(3,)
+            acceleromter, #(3,)
+            gravity, #(3,)
+            lin_vel, #(3,)
+            global_ang_vel, #(3,)
+            joint_angles - self.default_pose, #(12,)
+            joint_vel, #(12,)
             root_height, #(1,)
+            actuator_forces, #(12,)
             feet_vel, #(2,)
-            # info["feet_air_time"], #(2,)
-            # info["contact"], #(2,)
-            info["command"], #(3,)
-            info["last_act"], #(12,)
+            info["feet_air_time"] #(2,)
         ])
+    
+        if self.stack_obs:
+            obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
 
-
-        if self.add_noise:
-            obs += self.obs_noise_scale * jax.random.normal(obs_rng, obs.shape)
-        
-        #check this
-        obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
-
-        privileged_obs = (
-            jp.roll(privileged_obs_history, privileged_obs.size)
-            .at[: privileged_obs.size]
-            .set(privileged_obs)
-        )
-        
+            privileged_obs = (
+                jp.roll(privileged_obs_history, privileged_obs.size)
+                .at[: privileged_obs.size]
+                .set(privileged_obs)
+            )
+            
         return {
             "state": obs, 
             "privileged_state": privileged_obs
@@ -374,59 +495,7 @@ class Joystick(PipelineEnv):
         for i, name in enumerate(self.reward_names):
             reward_dict[name] = reward_arr[i]
 
-        return reward_dict
-    
-    def _get_contact_forces(self, data: mjx.Data):
-        """Compute contact forces between colliders and determine foot contact masks.
-
-        This function calculates the contact forces between colliders based on the provided
-        simulation data. It also determines whether the left and right foot colliders are in
-        contact with the ground by comparing the contact forces against a predefined threshold.
-
-        Args:
-            data (mjx.Data): The simulation data containing contact information.
-
-        Returns:
-            Tuple[jax.Array, jax.Array, jax.Array]: A tuple containing:
-                - A 3D array of shape (num_colliders, num_colliders, 3) representing the global
-                  contact forces between colliders.
-                - A 1D array indicating whether each left foot collider is in contact.
-                - A 1D array indicating whether each right foot collider is in contact.
-        """
-        # Extract geom1 and geom2 directly
-        geom1 = data.contact.geom1
-        geom2 = data.contact.geom2
-
-        def get_body_index(geom_id: jax.Array) -> jax.Array:
-            return jp.argmax(self.collider_geom_ids == geom_id)
-
-        # Vectorized computation of body indices for geom1 and geom2
-        body_indices_1 = jax.vmap(get_body_index)(geom1)
-        body_indices_2 = jax.vmap(get_body_index)(geom2)
-
-        contact_forces_global = jp.zeros((self.num_colliders, self.num_colliders, 3))
-        for i in range(data.ncon):
-            contact_force = self.jit_contact_force(self.sys, data, i, True)[:3]
-            # Update the contact forces for both body_indices_1 and body_indices_2
-            # Add instead of set to accumulate forces from multiple contacts
-            contact_forces_global = contact_forces_global.at[
-                body_indices_1[i], body_indices_2[i]
-            ].add(contact_force)
-            contact_forces_global = contact_forces_global.at[
-                body_indices_2[i], body_indices_1[i]
-            ].add(contact_force)
-
-        left_foot_contact_mask = (
-            contact_forces_global[0, self.left_foot_collider_indices, 2]
-            > self.contact_force_threshold
-        ).astype(jp.float32)
-        right_foot_contact_mask = (
-            contact_forces_global[0, self.right_foot_collider_indices, 2]
-            > self.contact_force_threshold
-        ).astype(jp.float32)
-
-        return contact_forces_global, left_foot_contact_mask, right_foot_contact_mask        
-            
+        return reward_dict            
 
     def sample_command(self, rng: jax.Array) -> jax.Array:
         """ 
@@ -454,3 +523,4 @@ class Joystick(PipelineEnv):
             jp.zeros(3),
             jp.hstack([lin_vel_x, lin_vel_y, ang_vel_yaw]),
         )
+

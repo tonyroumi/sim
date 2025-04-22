@@ -1,6 +1,7 @@
 """ Script to train RL agent with Brax"""
 
 import argparse
+from pathlib import Path
 import sys
 import cli_args
 import jax
@@ -60,6 +61,9 @@ os.environ["MUJOCO_GL"] = "egl"
 
 # Ignore the info logs from brax
 logging.set_verbosity(logging.WARNING)
+import logging
+logging.getLogger("jax._src.xla_bridge").setLevel(logging.ERROR)
+logging.getLogger("jax").setLevel(logging.ERROR)
 
 # Suppress warnings
 
@@ -69,10 +73,36 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="jax")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="jax")
 # Suppress UserWarnings from absl (used by JAX and TensorFlow)
 warnings.filterwarnings("ignore", category=UserWarning, module="absl")
+# Supress Hydra warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
-    robot = Robot(cfg.robot.name)
+    print("=" * 100)
+    checkpoint_path = None
+    robot_xml_path = None
+    robot_config_path = None
+    if args_cli.resume:
+        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
+        print(f"Restoring from checkpoint: {checkpoint_path}") 
+
+        run_dir = checkpoint_path
+        while run_dir.name != "logs" and run_dir != run_dir.parent:
+            run_dir = run_dir.parent
+        run_dir = run_dir.parent
+        
+        robot_config_path = run_dir / "robot_config.json"
+        robot_xml_path = str(run_dir / (cfg.robot.name + ".xml"))
+
+        print("Successfully loaded configuration from previous run")
+
+    else:
+        print("No checkpoint provided. Training from scratch.")
+
+    robot = Robot(robot_name=cfg.robot.name, 
+                  config_path=robot_config_path,
+                  xml_path=robot_xml_path)
 
     EnvClass = get_env_class(cfg.env.name)
     env_cfg = cfg.sim
@@ -114,33 +144,35 @@ def main(cfg: DictConfig):
     logdir.mkdir(parents=True, exist_ok=True)
     print(f"Logs are being stored to {logdir}")
 
+    if args_cli.video:
+        run_dir = logdir.parent
+        results_dir = run_dir / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+
+    ckpt_path = logdir / "checkpoints"
+    ckpt_path.mkdir(parents=True, exist_ok=True)
+
+    #Save environment configuration
+    with open(logdir.parent / "train_config.json", "w") as f:
+        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
+
+    #Save robot configuration
+    with open(logdir.parent / "robot_config.json", "w") as f:
+        json.dump(robot.config, f, indent=4)
+    
+    #Save robot xml
+    with open(logdir.parent / Path(robot.name + ".xml"), "w") as f:
+        f.write(robot.xml)
+
+    print("=" * 100)
+
     wandb.init(
         project=args_cli.log_project_name,
         name=run_name,
         config=OmegaConf.to_container(train_cfg)
     )
-    
-    checkpoint_path = None
-    if args_cli.resume:
-        checkpoint_path = epath.Path(args_cli.checkpoint).resolve()
-        print(f"Restoring from checkpoint: {checkpoint_path}") 
-    else:
-        print("No checkpoint provided. Training from scratch.")
-
-
-    ckpt_path = logdir / "checkpoints"
-    ckpt_path.mkdir(parents=True, exist_ok=True)
-    print(f"Checkpoint path: {ckpt_path}")
-
-    #Save environment configuration
-    with open(logdir / "train_config.json", "w") as f:
-        json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
-
-
-    #Save robot configuration
-    with open(logdir / "robot_config.json", "w") as f:
-        json.dump(robot.config, f, indent=4)
-
+    print("=" * 100)
 
     def policy_params_fn(current_step: int, make_policy: Any, params: Any):
         # save checkpoints
@@ -195,17 +227,16 @@ def main(cfg: DictConfig):
             print(f"Saving rollout at step {last_ckpt_step}")
             current_ckpt_path = os.path.join(logdir, "checkpoints")
             current_policy_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}", "policy")
-            save_path = os.path.join(current_ckpt_path, f"{last_ckpt_step}.mp4")
+            save_path = str(results_dir / f"{last_ckpt_step}")
             save_rollout(save_path, current_policy_path, test_env, make_networks_factory, args_cli.video_length)
             last_video_step = last_ckpt_step
 
         last_ckpt_step = num_steps
 
-        episode_reward = float(metrics.get("episode_reward", 0))
+        episode_reward = float(metrics.get("eval/episode_reward", 0))
         if episode_reward > best_episode_reward:
             best_episode_reward = episode_reward
             best_ckpt_step = num_steps
-        
         print(f"{num_steps}: {metrics['eval/episode_reward']}")
     
     try:
@@ -220,9 +251,11 @@ def main(cfg: DictConfig):
     print(f"best checkpoint step: {best_ckpt_step}")
     print(f"best episode reward: {best_episode_reward}")
 
+
+    #Save best rollout
     print(f"Saving rollout for best checkpoint")
-    best_ckpt_path = os.path.join(logdir, "checkpoints", f"{best_ckpt_step}")
-    best_policy_path = os.path.join(best_ckpt_path, "policy")
+    best_ckpt_path = os.path.join(logdir.parent, f"best_policy-{best_ckpt_step}")
+    best_policy_path = os.path.join(logdir, "checkpoints", f"{best_ckpt_step}", "policy")
     save_rollout(best_ckpt_path, best_policy_path, test_env, make_networks_factory, 1000)
 
 if __name__ == "__main__":

@@ -60,22 +60,22 @@
       </default>
 
       <!-- joints -->
-      <joint type="hinge" damping="2" frictionloss="0.1" solimplimit="0 .99 .01"/>
+      <joint type="hinge" damping="0.3" stiffness="1" frictionloss="0.1" armature="0.01" solimplimit="0 .99 .01"/>
       <position kp="75" inheritrange="1"/>
         <default class="HR">
-          <joint range="-30 10" armature="0.01" />
+          <joint range="-30 10" />
         </default>
         <default class="HAA">
-          <joint range="-60 35" armature="0.02"/>
+          <joint range="-60 35"/>
         </default>
         <default class="HFE">
-          <joint axis="0 1 0" range="-150 20" armature="0.01"/>
+          <joint axis="0 1 0" range="-150 20"/>
         </default>
       <default class="KFE">
-        <joint pos="0 0 .02" axis="0 -1 0" range="-160 2" armature="0.025"/>
+        <joint pos="0 0 .02" axis="0 -1 0" range="-160 2" />
       </default>
       <default class="ankle">
-        <joint range="-50 50" armature="0.07"/>
+        <joint range="-50 50" />
         <default class="FFE">
           <joint pos="0 0 .08" axis="0 1 0" stiffness="6" />
         </default>

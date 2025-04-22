@@ -10,7 +10,6 @@ def add_rl_args(parser: argparse.ArgumentParser):
     arg_group = parser.add_argument_group("brax", description="Arguments for Brax agent.")
     # -- load arguments
     arg_group.add_argument("--resume", action="store_true", default=False, help="Whether to resume from a checkpoint.")
-    arg_group.add_argument("--load_run", type=str, default=None, help="Name of the run folder to resume from.")
     arg_group.add_argument("--checkpoint", type=str, default=None, help="Checkpoint file to resume from.")
   
     arg_group.add_argument(
