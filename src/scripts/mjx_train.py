@@ -148,17 +148,14 @@ def main(cfg: DictConfig):
         run_dir = logdir.parent
         results_dir = run_dir / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Results are being stored to {results_dir}")
 
 
     ckpt_path = logdir / "checkpoints"
     ckpt_path.mkdir(parents=True, exist_ok=True)
-    print(f"Checkpoint path: {ckpt_path}")
 
     #Save environment configuration
     with open(logdir.parent / "train_config.json", "w") as f:
         json.dump(OmegaConf.to_container(train_cfg), f, indent=4)
-
 
     #Save robot configuration
     with open(logdir.parent / "robot_config.json", "w") as f:

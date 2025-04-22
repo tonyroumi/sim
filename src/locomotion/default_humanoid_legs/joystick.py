@@ -15,6 +15,8 @@ from src.utils.file_utils import find_robot_file_path
 from src.utils.math_utils import quat2euler, quat_inv, rotate_vec
 from src.rewards import get_reward_function
 from src.tools.collision import check_feet_contact
+from mujoco.mjx._src import math
+
 from src.locomotion.default_humanoid_legs.base import DefaultHumanoidEnv
 
 
@@ -55,6 +57,10 @@ class Joystick(DefaultHumanoidEnv):
     ])
 
         foot_linvel_sensor_adr = []
+        self.feet_site_id = [
+            support.name2id(self.sys, mujoco.mjtObj.mjOBJ_SITE, name)
+            for name in ["l_foot", "r_foot"]
+        ]
         for site in ["l_foot", "r_foot"]:
             sensor_id = self.sys.mj_model.sensor(f"{site}_global_linvel").id
             sensor_adr = self.sys.mj_model.sensor_adr[sensor_id]
@@ -62,6 +68,24 @@ class Joystick(DefaultHumanoidEnv):
             foot_linvel_sensor_adr.append(
                 list(range(sensor_adr, sensor_adr + sensor_dim))
             )
+        self.feet_pos_sensor_names = ("l_foot", "r_foot")
+
+        hip_indices = []
+        hip_joint_names = ["HR", "HAA"]
+        for side in ["LL", "LR"]:
+            for joint_name in hip_joint_names:
+                hip_indices.append(
+                    self.sys.mj_model.joint(f"{side}_{joint_name}").qposadr - 7
+                )
+        self.hip_indices = jp.array(hip_indices)
+
+        knee_indices = []
+        for side in ["LL", "LR"]:
+            knee_indices.append(self.sys.mj_model.joint(f"{side}_KFE").qposadr - 7)
+        self.knee_indices = jp.array(knee_indices)
+
+
+
         self._foot_linvel_sensor_adr = jp.array(foot_linvel_sensor_adr)
         
         self.feet_body_ids = jp.array(
@@ -80,19 +104,6 @@ class Joystick(DefaultHumanoidEnv):
                 for name in self.robot.motor_ordering
             ]
         )
-        
-        self.obs_noise_scale = self.cfg.noise.obs_noise_scale * jp.concatenate(
-            [
-                jp.ones(3) * self.cfg.noise.lin_vel,
-                jp.ones(3) * self.cfg.noise.ang_vel,
-                jp.ones(3) * self.cfg.noise.euler,
-                jp.zeros(self.action_size) * self.cfg.noise.motor_pos,
-                jp.ones(self.action_size) * self.cfg.noise.motor_vel,
-                jp.zeros(4),
-                jp.zeros(3),
-                jp.zeros(self.action_size)
-            ]
-        )
 
         self.lin_vel_x = self.cfg.domain_rand.lin_vel_x
         self.lin_vel_y = self.cfg.domain_rand.lin_vel_y
@@ -103,12 +114,26 @@ class Joystick(DefaultHumanoidEnv):
         self.num_privileged_obs_history = self.cfg.obs.c_frame_stack
         self.obs_size = self.cfg.obs.num_single_obs
         self.privileged_obs_size = self.cfg.obs.num_single_privileged_obs
-        self.obs_scales = self.cfg.obs_scales
 
         self.resample_time = self.cfg.commands.resample_time
         self.resample_steps = int(self.resample_time / self.dt)
         self.reset_time = self.cfg.commands.reset_time
         self.reset_steps = int(self.reset_time / self.dt)
+
+        self.push_interval_range = self.cfg.push.interval_range
+        self.push_magnitude_range = self.cfg.push.magnitude_range
+
+        qpos_noise_scale = np.zeros(12)
+        hip_ids = [0, 1, 2, 6, 7, 8]
+        kfe_ids = [3, 9]
+        ffe_ids = [4, 10]
+        faa_ids = [5, 11]
+        qpos_noise_scale[hip_ids] = self.cfg.noise.hip_pos
+        qpos_noise_scale[kfe_ids] = self.cfg.noise.kfe_pos
+        qpos_noise_scale[ffe_ids] = self.cfg.noise.ffe_pos
+        qpos_noise_scale[faa_ids] = self.cfg.noise.faa_pos
+        self.qpos_noise_scale = jp.array(qpos_noise_scale)
+
 
     def _init_reward(self) -> None:
         """Initializes the reward system by filtering and scaling reward components.
@@ -133,18 +158,35 @@ class Joystick(DefaultHumanoidEnv):
         self.healthy_z_range = self.cfg.rewards.healthy_z_range
         self.max_foot_height = self.cfg.rewards.max_foot_height
         self.tracking_sigma = self.cfg.rewards.tracking_sigma
+        self.base_height_target = self.cfg.rewards.base_height_target
 
 
     def reset(self, rng: jp.ndarray) -> State:
         """ Resets the environment to the initial state"""
-        (
-        rng,
-        rng_cmd,
-        rng_gait,
-        ) = jax.random.split(rng, 3)
-
         qpos = self.init_q.copy() 
         qvel = jp.zeros(self.nv)
+
+        # x=+U(-0.5, 0.5), y=+U(-0.5, 0.5), yaw=U(-3.14, 3.14).
+        rng, key = jax.random.split(rng)
+        dxy = jax.random.uniform(key, (2,), minval=-0.5, maxval=0.5)
+        qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
+        rng, key = jax.random.split(rng)
+        yaw = jax.random.uniform(key, (1,), minval=-3.14, maxval=3.14)
+        quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw) 
+        new_quat = math.quat_mul(qpos[3:7], quat)
+        qpos = qpos.at[3:7].set(new_quat)
+
+        # qpos[7:]=*U(0.5, 1.5)
+        rng, key = jax.random.split(rng)
+        qpos = qpos.at[7:].set(
+            qpos[7:] * jax.random.uniform(key, (12,), minval=0.5, maxval=1.5)
+        )
+
+        # d(xyzrpy)=U(-0.5, 0.5)
+        rng, key = jax.random.split(rng)
+        qvel = qvel.at[0:6].set(
+            jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5)
+        )
 
         #Here we can include some randomizations like joint positions, velocities of base, and position of base and orientation.
 
@@ -152,28 +194,44 @@ class Joystick(DefaultHumanoidEnv):
 
         # We can take either a phase based walking approach or a trajectory based walking approach. (ZMP)
         # Phase, freq=U(1.25, 1.5) : Gate cycle
-        gait_freq = jax.random.uniform(rng_gait, (1,), minval=1.25, maxval=1.5)
+        rng, key = jax.random.split(rng)
+        gait_freq = jax.random.uniform(key, (1,), minval=1.25, maxval=1.5)
         phase_dt = 2 * jp.pi * self.dt * gait_freq #Change in phase per time step (how gait phase evolves over time)
         phase = jp.array([0, jp.pi]) #One leg starts at beginning of gait cycle, other starts at mid-gait cycle (natural alternation between two legs)
 
         #Generate a random command
-        rng, cmd_rng = jax.random.split(rng_cmd)
+        rng, cmd_rng = jax.random.split(rng)
         cmd = self.sample_command(cmd_rng) #[lin_vel_x, lin_vel_y, ang_vel_yaw]
+
+        # Sample push interval.
+        rng, push_rng = jax.random.split(rng)
+        push_interval = jax.random.uniform(
+            push_rng,
+            minval=self.push_interval_range[0],
+            maxval=self.push_interval_range[1],
+        )
+        push_interval_steps = jp.round(push_interval / self.dt).astype(jp.int32)
 
 
         state_info = {
             "rng": rng,
-            "phase": phase,
-            "phase_dt": phase_dt,
-            "command": cmd,
-            "first_contact": jp.zeros(2),
-            "last_contact": jp.zeros(2),
-            "swing_peak": jp.zeros(2),
-            "last_act": jp.zeros(self.action_size),
-            "last_last_act": jp.zeros(self.action_size),
-            "feet_air_time": jp.zeros(2),
-            "done": False,
             "step": 0,
+            "done": False,
+            "command": cmd,
+            "last_act": jp.zeros(self.nu),
+            "last_last_act": jp.zeros(self.nu),
+            "motor_targets": jp.zeros(self.nu),
+            "feet_air_time": jp.zeros(2),
+            "first_contact": jp.zeros(2, dtype=jp.float32),
+            "last_contact": jp.zeros(2, dtype=jp.float32),
+            "swing_peak": jp.zeros(2),
+            # Phase related.
+            "phase_dt": phase_dt,
+            "phase": phase,
+            # Push related.
+            "push": jp.array([0.0, 0.0]),
+            "push_step": 0,
+            "push_interval_steps": push_interval_steps,
         }
 
         obs_history = jp.zeros(self.num_obs_history * self.obs_size)
@@ -193,6 +251,7 @@ class Joystick(DefaultHumanoidEnv):
         metrics = {}
         for k in self.reward_names:
             metrics[k] = zero
+        metrics["swing_peak"] = jp.zeros(())
         
         return State(
             pipeline_state, obs, reward, done, metrics, state_info
@@ -200,32 +259,31 @@ class Joystick(DefaultHumanoidEnv):
 
     def step(self, state: State, action: jax.Array) -> State:
         """ Performs a step in the environment"""
-
-        rng, cmd_rng = jax.random.split(
-            state.info["rng"], 2
+        
+        
+        state.info["rng"], push1_rng, push2_rng = jax.random.split(
+            state.info["rng"], 3
         )
-        # apply a push if desired
+        push_theta = jax.random.uniform(push1_rng, maxval=2 * jp.pi)
+        push_magnitude = jax.random.uniform(
+            push2_rng,
+            minval=self.push_magnitude_range[0],
+            maxval=self.push_magnitude_range[1],
+        )
+        push = jp.array([jp.cos(push_theta), jp.sin(push_theta)])
+        push *= (
+            jp.mod(state.info["push_step"] + 1, state.info["push_interval_steps"])
+            == 0
+        )
+        push *= self.add_push
+        qvel = state.pipeline_state.qd
+        qvel = qvel.at[:2].set(push * push_magnitude + qvel[:2])
+        state.tree_replace({"pipeline_state.qd": qvel})
+
+
         motor_targets = self.default_pose + action * self.cfg.action.action_scale
-
         pipeline_state = self.pipeline_step(state.pipeline_state, motor_targets)
-
-        if self.add_domain_rand:
-            # add rand
-            pass
-
-        torso_height = pipeline_state.xpos[self.torso_body_id, 2] 
-        done = jp.logical_or(
-            torso_height < self.healthy_z_range[0],
-            torso_height > self.healthy_z_range[1],
-        )
-        state.info["done"] = done
-
-        obs = self._get_obs(
-            pipeline_state,
-            state.info,
-            state.obs['state'],
-            state.obs['privileged_state'],
-        )
+        state.info["motor_targets"] = motor_targets
 
         contact = check_feet_contact(pipeline_state, self.feet_link_ids)
 
@@ -234,24 +292,38 @@ class Joystick(DefaultHumanoidEnv):
         contact_filt = contact_bool | last_contact_bool
         state.info["first_contact"] = ((state.info["feet_air_time"] > 0.0) * contact_filt).astype(jp.float32)
         state.info["feet_air_time"] += self.dt
-        p_f = pipeline_state.xpos[self.feet_body_ids] 
+        #check these values
+        p_f = pipeline_state.x.pos[self.feet_link_ids] 
         p_fz = p_f[...,-1]
         state.info["swing_peak"] = jp.maximum(state.info["swing_peak"], p_fz)
 
         state.info["feet_air_time"] *= ~contact
         state.info["last_contact"] = contact.astype(jp.float32)  
         state.info["swing_peak"] *= ~contact
+        
+        obs = self._get_obs(
+            pipeline_state,
+            state.info,
+            state.obs['state'],
+            state.obs['privileged_state'],
+        )        
+
+        done = self.get_termination(pipeline_state)
+        state.info["done"] = done
 
         reward_dict = self._compute_reward(pipeline_state, state.info, action)
-        reward = sum(reward_dict.values()) * self.dt
+        reward = jp.clip(sum(reward_dict.values()) * self.dt, 0.0, 10000.0)
+        state.metrics["swing_peak"] = jp.mean(state.info["swing_peak"])
+
+        state.info["push"] = push
+        state.info["step"] += 1
+        state.info["push_step"] += 1
 
         phase_tp1 = state.info["phase"] + state.info["phase_dt"]
         state.info["phase"] = jp.fmod(phase_tp1 + jp.pi, 2 * jp.pi) - jp.pi
         state.info["last_last_act"] = state.info["last_act"].copy()
         state.info["last_act"] = action.copy()
-        state.info["rng"] = rng
-        state.info["step"] += 1
-
+        state.info["rng"], cmd_rng = jax.random.split(state.info["rng"])
         state.info["command"] = jax.lax.cond(
             state.info["step"] % self.resample_steps == 0,
             lambda: self.sample_command(cmd_rng),
@@ -271,7 +343,15 @@ class Joystick(DefaultHumanoidEnv):
             reward = reward,
             done = done.astype(jp.float32),
         )
-
+    
+    def get_termination(self, pipeline_state: base.State) -> jax.Array:
+        """Returns a boolean array indicating whether the termination condition is met."""
+        torso_height = pipeline_state.xpos[self.torso_body_id, 2] 
+        
+        return jp.logical_or(
+            torso_height < self.healthy_z_range[0],
+            torso_height > self.healthy_z_range[1],
+        )
     def _get_obs(
             self,
             pipeline_state: base.State,
@@ -280,32 +360,65 @@ class Joystick(DefaultHumanoidEnv):
             privileged_obs_history: jax.Array,
     ) -> jp.ndarray:
         """ Returns the observation"""
-        rng, obs_rng = jax.random.split(info["rng"], 2)
-
         gyro = self.get_gyro(pipeline_state)
-        gravity = pipeline_state.site_xmat[self.sys.mj_model.site("imu").id] @ jp.array([0,0, -1])
-        joint_velocities = pipeline_state.qvel[6:]
-        lin_vel = self.get_local_linvel(pipeline_state)
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_gyro = (
+            gyro
+            + (2 * jax.random.uniform(noise_rng, shape=gyro.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.gyro
+        )
         
-        motor_pos = pipeline_state.q[7:]
-        motor_pos_delta = (
-            motor_pos - self.default_pose
+        gravity = pipeline_state.site_xmat[self.sys.mj_model.site("imu").id] @ jp.array([0,0, -1])
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_gravity = (
+            gravity
+            + (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.gravity
         )
 
-        #tracks the phase of the gait cycle
+        joint_angles = pipeline_state.qpos[7:]
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_joint_angles = (
+            joint_angles
+            + (2 * jax.random.uniform(noise_rng, shape=joint_angles.shape) - 1)
+            * self.cfg.noise.level
+            * self.qpos_noise_scale
+        )
+
+        joint_vel = pipeline_state.qvel[6:]
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_joint_vel = (
+            joint_vel
+            + (2 * jax.random.uniform(noise_rng, shape=joint_vel.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.joint_vel
+        )
+
         cos = jp.cos(info["phase"])
         sin = jp.sin(info["phase"])
         phase = jp.concatenate([cos, sin])
 
+        lin_vel = self.get_local_linvel(pipeline_state)
+        info["rng"], noise_rng = jax.random.split(info["rng"], 2)
+        noisy_lin_vel = (
+            lin_vel
+            + (2 * jax.random.uniform(noise_rng, shape=lin_vel.shape) - 1)
+            * self.cfg.noise.level
+            * self.cfg.noise.lin_vel
+        )
+
+
         obs = jp.hstack([
-            lin_vel, #(3,)
-            gyro, #(3,)
-            gravity, #(3,)
+            noisy_lin_vel, #(3,)
+            noisy_gyro, #(3,)
+            noisy_gravity, #(3,)
             info["command"], #(3,)
-            joint_velocities, #(12,)
+            noisy_joint_angles - self.default_pose, #(12,)
+            noisy_joint_vel,
             info["last_act"], #(12,)
             phase, #(2,)
-            motor_pos_delta #(12,)
         ])
 
         acceleromter = self.get_accelerometer(pipeline_state) #(3,)
@@ -314,26 +427,22 @@ class Joystick(DefaultHumanoidEnv):
         root_height = pipeline_state.qpos[2]
 
         actuator_forces = pipeline_state.actuator_force
-        #
-
     
         privileged_obs = jp.hstack([
             obs, #(50,)
+            gyro, #(3,)
             acceleromter, #(3,)
+            gravity, #(3,)
+            lin_vel, #(3,)
             global_ang_vel, #(3,)
-            feet_vel, #(2,)
+            joint_angles - self.default_pose, #(12,)
+            joint_vel, #(12,)
             root_height, #(1,)
-            info["last_contact"], #(2,)
             actuator_forces, #(12,)
-            info["command"], #(3,)
-            info["last_act"], #(12,)
+            feet_vel, #(2,)
+            info["feet_air_time"] #(2,)
         ])
-
-
-        if self.add_noise:
-            obs += self.obs_noise_scale * jax.random.normal(obs_rng, obs.shape)
-        
-        #check this
+    
         if self.stack_obs:
             obs = jp.roll(obs_history, obs.size).at[: obs.size].set(obs)
 

@@ -28,12 +28,34 @@ def _ang_vel(
 ) -> jax.Array:
     local_ang_vel = self.get_gyro(pipeline_state)
     ang_vel_error = jp.square(info["command"][2] - local_ang_vel[-1])
-    reward = jp.exp(-self.tracking_sigma / 4 * ang_vel_error)
+    reward = jp.exp(-self.tracking_sigma * ang_vel_error)
     return reward
 
+# Base-related rewards.
+
+@register_reward("lin_vel_z")
+def _lin_vel_z(self, pipeline_state: base.State, action: jax.Array, info: dict[str, Any]) -> jax.Array:
+    global_linvel = self.get_global_linvel(pipeline_state)
+    return jp.square(global_linvel[2])
+
+@register_reward("ang_vel_xy")
+def _ang_vel_xy(self, pipeline_state: base.State, action: jax.Array, info: dict[str, Any]) -> jax.Array:
+    global_angvel = self.get_global_angvel(pipeline_state)
+    return jp.sum(jp.square(global_angvel[:2]))
+
+@register_reward("orientation")
+def _orientation(self, pipeline_state: base.State, action: jax.Array, info: dict[str, Any]) -> jax.Array:
+    gravity = self.get_gravity(pipeline_state)
+    return jp.sum(jp.square(gravity[:2]))
+
+@register_reward("base_height")
+def _base_height(self, pipeline_state: base.State, action: jax.Array, info: dict[str, Any]) -> jax.Array:
+    base_height = pipeline_state.qpos[2]
+    return jp.square(
+        base_height - self.base_height_target
+    )
 
 # Energy related rewards.
-
 @register_reward("torques")
 def _torques(
     self,
@@ -65,7 +87,6 @@ def _action_rate(
 
 
 # Feet related rewards.
-
 @register_reward("feet_slip")
 def _feet_slip(
     self,
@@ -76,7 +97,6 @@ def _feet_slip(
     body_vel = self.get_global_linvel(pipeline_state)
     reward = jp.sum(jp.linalg.norm(body_vel, axis=-1) * info["last_contact"])
     return reward
-
 
 @register_reward("feet_clearance")
 def _feet_clearance(
@@ -113,24 +133,65 @@ def _feet_phase(
     # Reward for tracking the desired foot height.
     foot_pos = pipeline_state.xpos[self.feet_body_ids]
     foot_z = foot_pos[..., -1]
-    rz = gait.get_rz(info["phase"], swing_height=self.max_foot_height) #whattt
+    rz = gait.get_rz(info["phase"], swing_height=self.max_foot_height)
     error = jp.sum(jp.square(foot_z - rz))
     reward = jp.exp(-error / 0.01)
     cmd_norm = jp.linalg.norm(info["command"])
     reward *= cmd_norm > 0.1  # No reward for zero commands.
     return reward
 
-# Other rewards.
+@register_reward("feet_air_time")
+def _feet_air_time(
+    self,
+    pipeline_state: base.State,
+    info: dict[str, Any],
+    action: jax.Array,
+) -> jax.Array:
+    cmd_norm = jp.linalg.norm(info["command"])
+    air_time = (info["feet_air_time"] - 0.2) * info["first_contact"]
+    air_time = jp.clip(air_time, max=0.5 - 0.2)
+    reward = jp.sum(air_time)
+    reward *= cmd_norm > 0.1  # No reward for zero commands.
+    return reward
+
+# Pose-related rewards.
+
+@register_reward("joint_deviation_hip")
+def _joint_deviation_hip(
+    self, 
+    pipeline_state: base.State, 
+    info: dict[str, Any], 
+    action: jax.Array
+) -> jax.Array:
+    cost = jp.sum(
+        jp.abs(pipeline_state.qpos[self.hip_indices] - self.default_pose[self.hip_indices])
+    )
+    cost *= jp.abs(info["command"][1]) > 0.1
+    return cost
+
+@register_reward("joint_deviation_knee")
+def _joint_deviation_knee(
+    self, 
+    pipeline_state: base.State, 
+    info: dict[str, Any], 
+    action: jax.Array
+) -> jax.Array:
+    return jp.sum(
+        jp.abs(
+            pipeline_state.qpos[self.knee_indices] - self.default_pose[self.knee_indices]
+        )
+    )
 
 @register_reward("pose")
-def _pose(self, pipeline_state: base.State, info, action) -> jax.Array:
+def _pose(
+    self, 
+    pipeline_state: base.State, 
+    info, 
+    action) -> jax.Array:
     qpos = pipeline_state.qpos[7:]
     return jp.sum(jp.square(qpos - self.default_pose) * self._weights)
 
-@register_reward("orientation")
-def _orientation(self, pipeline_state: base.State, info, action) -> jax.Array:
-    gravity = self.get_gravity(pipeline_state)
-    return jp.sum(jp.square(gravity[:2]))
+# Other rewards.
 
 @register_reward("stand_still")
 def _stand_still(
@@ -144,7 +205,10 @@ def _stand_still(
 
 @register_reward("survival")
 def _survival(
-    self, pipeline_state: base.State, info: dict[str, Any], action: jax.Array
+    self, 
+    pipeline_state: base.State, 
+    info: dict[str, Any], 
+    action: jax.Array
 ) -> jax.Array:
     """Calculates a survival reward based on the pipeline state and action taken.
 
@@ -160,47 +224,7 @@ def _survival(
     Returns:
         jax.Array: A float32 array representing the survival reward.
     """
-    return -(info["done"] & (info["step"] < self.reset_steps)).astype(jp.float32)
+    return (info["done"] & (info["step"] < self.reset_steps)).astype(jp.float32)
 
 
-@register_reward("distance_traveled")
-def _distance_traveled(self, pipeline_state, info, action):
-    """Rewards the agent based on the total distance traveled from the starting point.
-    
-    This reward:
-    1. Calculates horizontal distance from origin (x-y plane)
-    2. Provides increasing reward for greater distances
-    3. Optionally normalizes the reward to avoid excessive scaling
-    
-    Args:
-        pipeline_state: Current physics state
-        info: Additional state information
-        action: Current action
-        
-    Returns:
-        Scalar reward value based on distance traveled
-    """
-    # Get current position of the torso (center of mass)
-    current_pos = pipeline_state.x.pos[self.torso_body_id]
-    
-    # Calculate horizontal distance from origin (x-y plane only)
-    # Ignoring z-axis (height) to focus on ground movement
-    horizontal_distance = jp.sqrt(current_pos[0]**2 + current_pos[1]**2)
-    
-    # Parameters (consider moving these to config)
-    max_distance = 10.0  # Distance at which reward saturates
-    reward_scale = 1.0   # Scaling factor for the reward
-    
-    # Option 1: Linear scaling with maximum cap
-    # normalized_distance = jp.minimum(horizontal_distance, max_distance) / max_distance
-    
-    # Option 2: Logarithmic scaling to reduce reward growth at larger distances
-    # This provides more reward for initial movement but diminishing returns
-    normalized_distance = jp.log(1.0 + horizontal_distance) / jp.log(1.0 + max_distance)
-    
-    # Calculate final reward
-    distance_reward = normalized_distance * reward_scale
-    cmd_norm = jp.linalg.norm(info["command"])
-    distance_reward *= cmd_norm > 0.1  # No reward for zero commands.
-    return distance_reward
 

@@ -6,7 +6,7 @@ TRAIN_SCRIPT="src/scripts/mjx_train.py"
 
 # Video recording parameters
 VIDEO_LENGTH=1000
-VIDEO_INTERVAL=10000000
+VIDEO_INTERVAL=50000000
 
 #Task and environment will be determined by the checkpoint
 CHECKPOINT_PATH="/home/anthony-roumi/Desktop/sim/multirun/0.0001_0.03_50.0/logs/checkpoints/92160000"

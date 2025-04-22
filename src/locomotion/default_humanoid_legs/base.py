@@ -3,6 +3,7 @@ from brax.envs.base import PipelineEnv
 from brax.io import mjcf
 import jax
 from typing import Any
+import jax.numpy as jp
 from src.tools.mjx import get_sensor_data
 
 class DefaultHumanoidEnv(PipelineEnv):
@@ -19,6 +20,7 @@ class DefaultHumanoidEnv(PipelineEnv):
         self.add_noise = cfg.noise.add_noise
         self.stack_obs = cfg.obs.stack_obs
         self.add_domain_rand = cfg.domain_rand.add_domain_rand
+        self.add_push = cfg.push.add_push
 
         scene_xml_path = find_robot_file_path(robot.name, scene, '.xml')
 
@@ -71,4 +73,11 @@ class DefaultHumanoidEnv(PipelineEnv):
     def get_gyro(self, pipeline_state) -> jax.Array:
         """Return the gyroscope readings in the local frame."""
         return get_sensor_data(self.sys.mj_model, pipeline_state, "gyro")
+    
+    def get_feet_pos(self, pipeline_state) -> jax.Array:
+        """Return the position of the feet in the world frame."""
+        return jp.vstack([
+            get_sensor_data(self.sys.mj_model, pipeline_state, sensor_name)
+            for sensor_name in self.feet_pos_sensor_names
+        ])
     
