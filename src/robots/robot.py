@@ -17,11 +17,8 @@ class Robot:
         self.name = robot_name
 
         self.root_path = os.path.join(project_root, "src", "robots", robot_name)
-        self.config_path = os.path.join(self.root_path, "config.json") if config_path is None else config_path
+        self.model_config_path = os.path.join(self.root_path, "mj_model.json") if config_path is None else config_path
         self.xml_path = os.path.join(self.root_path, self.name + ".xml") if xml_path is None else xml_path
-
-        with open(self.config_path, "r") as f:
-            self.config = json.load(f)
         
         with open(self.xml_path, "r") as f:
             self.xml = f.read()
@@ -35,9 +32,9 @@ class Robot:
         Raises:
             FileNotFoundError: If the main configuration file or the collision configuration file does not exist at the specified paths.
         """
-        if os.path.exists(self.config_path):
-            with open(self.config_path, "r") as f:
-                self.config = json.load(f)
+        if os.path.exists(self.model_config_path):
+            with open(self.model_config_path, "r") as f:
+                self.model_config = json.load(f)
 
         else:
             raise FileNotFoundError(f"No config file found for robot '{self.name}'.")
@@ -48,36 +45,73 @@ class Robot:
         
         Loads motor ordering, foot names, joint limits, and stores the names of geoms, bodies, and sensors.
         """
-        # Load motor ordering
-        self.motor_ordering = []
-        for joint_name, joint_config in self.config["joints"].items():
-            self.motor_ordering.append(joint_name)
-            
-        # Load foot name if specified
-        if "foot_name" in self.config["general"]:
-            self.foot_name = self.config["general"]["foot_name"]
 
-        # Initialize joint limits dictionary
+        self.joints = {}
         self.joint_limits = {}
-        for joint_name, joint_config in self.config["joints"].items():
-            if "range" in joint_config:
-                range_str = joint_config["range"]
-                min_val, max_val = map(float, range_str.split())
-                self.joint_limits[joint_name] = {"min": min_val, "max": max_val}
+        for joint in self.model_config["JOINT"].values():
+            self.joints[joint["name"]] = {
+                "qposadr": joint["jnt_qposadr"],
+                "jnt_bodyid": joint["jnt_bodyid"],
+            }
+            self.joint_limits[joint["name"]] = {
+                "min": joint["jnt_range"][0],
+                "max": joint["jnt_range"][1],
+            }
+
+        self.geoms = {}
+        for geom in self.model_config["GEOM"].values():
+            self.geoms[geom["name"]] = {
+                "geom_bodyid": geom["geom_bodyid"],
+            }
+            
+        self.bodies = {}
+        for body in self.model_config["BODY"].values():
+            if body["name"] == "world":
+                continue
+            self.bodies[body["name"]] = {
+                "body_id": body["body_rootid"],
+                "body_parentid": body["body_parentid"],
+                "body_jntadr": body["body_jntadr"],
+                "body_geom_adr": body["body_geomadr"],
+            }
         
-        # Store geom names
-        self.geom_names = []
-        if "geoms" in self.config:
-            self.geom_names = list(self.config["geoms"].keys())
+        self.sensors = {}
+        for sensor in self.model_config["SENSOR"].values():
+            self.sensors[sensor["name"]] = {
+                "sensor_type": sensor["sensor_type"],
+                "sensor_objtype": sensor["sensor_objtype"],
+                "sensor_dim": sensor["sensor_dim"],
+                "sensor_adr": sensor["sensor_adr"],
+            }
+
+        self.cameras = []
+        for camera in self.model_config["CAMERA"].values():
+            self.cameras.append(camera["name"])
         
-        # Store body names
-        self.body_names = []
-        if "bodies" in self.config:
-            self.body_names = list(self.config["bodies"].keys())
-        
-        # Store sensor names
-        self.sensor_names = []
-        if "sensors" in self.config:
-            self.sensor_names = list(self.config["sensors"].keys())
+        self.sites = {}
+        for site in self.model_config["SITE"].values():
+            self.sites[site["name"]] = {
+                "site_bodyid": site["site_bodyid"],
+                "site_type": site["site_type"],
+            }
+
+        self.actuators = {}
+        for actuator in self.model_config["ACTUATOR"].values():
+            self.actuators[actuator["name"]] = {
+                "actuator_acc0": actuator["actuator_acc0"],
+                "actuator_dyntype": actuator["actuator_dyntype"],
+                "actuator_gainprm": actuator["actuator_gainprm"],
+                "actuator_biastype": actuator["actuator_biastype"],
+                "actuator_biasprm": actuator["actuator_biasprm"],
+                "actuator_ctrlrange": actuator["actuator_ctrlrange"],
+                "actuator_forcerange": actuator["actuator_forcerange"],
+                
+            }
+            
+        # # Load foot name if specified
+        # if "foot_name" in self.config["general"]:
+        #     self.foot_name = self.config["general"]["foot_name"]
+
+       
 
             
