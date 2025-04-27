@@ -49,8 +49,8 @@ def domain_randomize(
         # Add mass to torso: 
         rng, key = jax.random.split(rng)
         dmass = jax.random.uniform(key, minval=torso_mass_range[0], maxval=torso_mass_range[1])
-        body_mass = body_mass.at[robot.torso_body_id].set(
-            body_mass[robot.torso_body_id] + dmass
+        body_mass = body_mass.at[robot.bodies["torso"]["body_id"]].set(
+            body_mass[robot.bodies["torso"]["body_id"]] + dmass
         )
 
         # Jitter qpos0: +U(-0.05, 0.05).
