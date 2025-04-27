@@ -65,11 +65,12 @@ class Robot:
             }
             
         self.bodies = {}
-        for body in self.model_config["BODY"].values():
+        for id, body in self.model_config["BODY"].items():
+            id = int(id.split(" ")[1])
             if body["name"] == "world":
                 continue
             self.bodies[body["name"]] = {
-                "body_id": body["body_rootid"],
+                "body_id": id,
                 "body_parentid": body["body_parentid"],
                 "body_jntadr": body["body_jntadr"],
                 "body_geom_adr": body["body_geomadr"],

@@ -109,7 +109,7 @@
                 <joint name="LR_FAA" class="FAA" axis="1 0 .5"/>
                 <geom name="foot1_right" class="foot1"/>
                 <geom name="foot2_right" class="foot2"/>
-                 <site name="r_foot" pos="0 0 -0.014" rgba="1 0 0 1"/>
+                 <site name="r_foot" pos="0.09 0 -0.014" rgba="1 0 0 1"/>
               </body>
             </body>
           </body>
@@ -127,7 +127,7 @@
                 
                 <geom name="foot1_left" class="foot1"/>
                 <geom name="foot2_left" class="foot2"/>
-                <site name="l_foot" pos="0 0 -.014" rgba="1 0 0 1"/>
+                <site name="l_foot" pos="0.09 0 -.014" rgba="1 0 0 1"/>
               </body>
             </body>
           </body>

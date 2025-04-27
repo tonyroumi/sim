@@ -159,7 +159,7 @@ def main(cfg: DictConfig):
 
     #Save robot configuration
     with open(logdir.parent / "robot_config.json", "w") as f:
-        json.dump(robot.config, f, indent=4)
+        json.dump(robot.model_config, f, indent=4)
     
     #Save robot xml
     with open(logdir.parent / Path(robot.name + ".xml"), "w") as f:
