@@ -49,7 +49,7 @@ from flax.training import orbax_utils
 from src.config.config import Config 
 from src.tools.rollouts import save_rollout
 from src.robots.robot import Robot
-
+from src.randomize import domain_randomize
 import wandb
 
 #Let's actually understand these flags?
@@ -159,7 +159,7 @@ def main(cfg: DictConfig):
 
     #Save robot configuration
     with open(logdir.parent / "robot_config.json", "w") as f:
-        json.dump(robot.config, f, indent=4)
+        json.dump(robot.model_config, f, indent=4)
     
     #Save robot xml
     with open(logdir.parent / Path(robot.name + ".xml"), "w") as f:
@@ -185,8 +185,17 @@ def main(cfg: DictConfig):
 
 
     domain_randomize_fn = None
-    #add domain randomization
-    #can choose to randomize body mass, friction, sim and robot parameters
+    if env.add_domain_rand:
+        domain_randomize_fn = functools.partial(
+            domain_randomize,
+            robot=robot,
+            friction_range=env_cfg.domain_rand.friction_range,
+            frictionloss_range=env_cfg.domain_rand.frictionloss_range,
+            armature_range=env_cfg.domain_rand.armature_range,
+            body_mass_range=env_cfg.domain_rand.body_mass_range,
+            torso_mass_range=env_cfg.domain_rand.torso_mass_range,
+            qpos0_range=env_cfg.domain_rand.qpos0_range,
+        )
 
     train_fn = functools.partial(
         ppo.train,

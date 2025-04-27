@@ -2,7 +2,7 @@
 export PYTHONPATH=$(pwd)
 
 # Define training script path
-TRAIN_SCRIPT="src/scripts/mjx_train.py"
+TRAIN_SCRIPT="src/scripts/train.py"
 
 # Define task and environment parameters
 TASK="locomotion"
@@ -44,9 +44,8 @@ add_param "SURVIVAL"           "0.0 -1.0 -5.0"
 add_param "LEARNING_RATE"      "1e-3 3e-4 1e-4"
 add_param "CLIPPING_EPSILON"   "0.1 0.2 0.3"
 add_param "TRACKING_SIGMA"     "1.0 10.0 50.0 100.0"
-
 # Run 200 randomized sweeps sequentially
-for i in {1..200}; do
+for i in {1..36}; do
     # Randomize parameters
     LIN_VEL=$(select_random "${PARAMS[LIN_VEL]}")
     ANG_VEL=$(select_random "${PARAMS[ANG_VEL]}")
@@ -69,17 +68,17 @@ for i in {1..200}; do
         --task="$TASK" \
         --log_project_name="$LOG_PROJECT_NAME" \
         --video \
-        sim.reward_scales.lin_vel="$LIN_VEL" \
-        sim.reward_scales.ang_vel="$ANG_VEL" \
-        sim.reward_scales.ang_vel_xy="$ANG_VEL_XY" \
-        sim.reward_scales.orientation="$ORIENTATION" \
-        sim.reward_scales.feet_slip="$FEET_SLIP" \
-        sim.reward_scales.feet_phase="$FEET_PHASE" \
-        sim.reward_scales.pose="$POSE" \
-        sim.reward_scales.survival="$SURVIVAL" 
-        # agent.learning_rate="$LEARNING_RATE" \
-        # agent.entropy_cost="$CLIPPING_EPSILON" \
-        # sim.rewards.tracking_sigma="$TRACKING_SIGMA"
+        agent.learning_rate="$LEARNING_RATE" \
+        agent.entropy_cost="$CLIPPING_EPSILON" \
+        sim.rewards.tracking_sigma="$TRACKING_SIGMA"
+        # sim.reward_scales.lin_vel="$LIN_VEL" \
+        # sim.reward_scales.ang_vel="$ANG_VEL" \
+        # sim.reward_scales.ang_vel_xy="$ANG_VEL_XY" \
+        # sim.reward_scales.orientation="$ORIENTATION" \
+        # sim.reward_scales.feet_slip="$FEET_SLIP" \
+        # sim.reward_scales.feet_phase="$FEET_PHASE" \
+        # sim.reward_scales.pose="$POSE" \
+        # sim.reward_scales.survival="$SURVIVAL" 
         # sim.reward_scales.survival="$SURVIVAL" \
          # sim.reward_scales.base_height="$BASE_HEIGHT" \
 

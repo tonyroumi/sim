@@ -2,7 +2,7 @@
 export PYTHONPATH=$(pwd)
 
 # Define training script path
-TRAIN_SCRIPT="src/scripts/mjx_train.py"
+TRAIN_SCRIPT="src/scripts/train.py"
 
 # Define task and environment parameters
 TASK="locomotion"
@@ -12,7 +12,7 @@ TERRAIN="flat"
 # Video recording parameters
 VIDEO=true
 VIDEO_LENGTH=1000
-VIDEO_INTERVAL=10000000
+VIDEO_INTERVAL=50000000
 
 LOG_PROJECT_NAME="default_humanoid_legs_locomotion"
 

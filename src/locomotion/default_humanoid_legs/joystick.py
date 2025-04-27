@@ -57,14 +57,9 @@ class Joystick(DefaultHumanoidEnv):
     ])
 
         foot_linvel_sensor_adr = []
-        self.feet_site_id = [
-            support.name2id(self.sys, mujoco.mjtObj.mjOBJ_SITE, name)
-            for name in ["l_foot", "r_foot"]
-        ]
         for site in ["l_foot", "r_foot"]:
-            sensor_id = self.sys.mj_model.sensor(f"{site}_global_linvel").id
-            sensor_adr = self.sys.mj_model.sensor_adr[sensor_id]
-            sensor_dim = self.sys.mj_model.sensor_dim[sensor_id]
+            sensor_adr = int(self.robot.sensors[f"{site}_global_linvel"]["sensor_adr"])
+            sensor_dim = int(self.robot.sensors[f"{site}_global_linvel"]["sensor_dim"])
             foot_linvel_sensor_adr.append(
                 list(range(sensor_adr, sensor_adr + sensor_dim))
             )
@@ -95,31 +90,32 @@ class Joystick(DefaultHumanoidEnv):
             ]
         )
         self.torso_body_id = support.name2id(self.sys, mujoco.mjtObj.mjOBJ_BODY, "torso")
-
         self.torso_sensor_id = support.name2id(self.sys, mujoco.mjtObj.mjOBJ_SENSOR, "torso")
 
-        self.motor_indices = jp.array(
-            [
-                support.name2id(self.sys, mujoco.mjtObj.mjOBJ_JOINT, name)
-                for name in self.robot.motor_ordering
-            ]
-        )
 
-        self.lin_vel_x = self.cfg.domain_rand.lin_vel_x
-        self.lin_vel_y = self.cfg.domain_rand.lin_vel_y
-        self.ang_vel_yaw = self.cfg.domain_rand.ang_vel_yaw
-
-        #observation
+        #Observations 
         self.num_obs_history = self.cfg.obs.frame_stack
         self.num_privileged_obs_history = self.cfg.obs.c_frame_stack
         self.obs_size = self.cfg.obs.num_single_obs
         self.privileged_obs_size = self.cfg.obs.num_single_privileged_obs
 
+        #Joystick related. Sample command
         self.resample_time = self.cfg.commands.resample_time
         self.resample_steps = int(self.resample_time / self.dt)
         self.reset_time = self.cfg.commands.reset_time
         self.reset_steps = int(self.reset_time / self.dt)
 
+        #Domain randomization
+        self.add_noise = self.cfg.noise.add_noise
+        self.stack_obs = self.cfg.obs.stack_obs
+        self.add_domain_rand = self.cfg.domain_rand.add_domain_rand
+        self.add_push = self.cfg.push.add_push
+        
+        self.lin_vel_x = self.cfg.domain_rand.lin_vel_x
+        self.lin_vel_y = self.cfg.domain_rand.lin_vel_y
+        self.ang_vel_yaw = self.cfg.domain_rand.ang_vel_yaw
+
+        #Push related
         self.push_interval_range = self.cfg.push.interval_range
         self.push_magnitude_range = self.cfg.push.magnitude_range
 
