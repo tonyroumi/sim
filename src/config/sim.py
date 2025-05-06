@@ -30,7 +30,7 @@ class MJXConfig:
     class RewardConfig:
         healthy_z_range: Tuple[float, float] = (0.7, 1.3)
         tracking_sigma: float = 0.5
-        max_foot_height: float = 0.25
+        max_foot_height: float = 0.2
         base_height_target: float = 0.9
 
     @dataclass
@@ -73,6 +73,12 @@ class MJXConfig:
         lin_vel_x: Tuple[float, float] = (-1.0, 1.0)
         lin_vel_y: Tuple[float, float] = (-1.0, 1.0)
         ang_vel_yaw: Tuple[float, float] = (-1.0, 1.0)
+        friction_range: Tuple[float] = (0.5, 2.0)
+        frictionloss_range: Tuple[float] = (0.9, 1.1)
+        armature_range: Tuple[float] = (1.0, 1.05)
+        body_mass_range: Tuple[float] = (0.9, 1.1)
+        torso_mass_range: Tuple[float] = (-1.0, 1.0)
+        qpos0_range: Tuple[float] = (-0.05, 0.05)
 
     @dataclass
     class NoiseConfig:

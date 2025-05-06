@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import disable_jit
+
 from src.robots.robot import Robot
 from src.locomotion import get_env_class
 

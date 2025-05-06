@@ -12,7 +12,7 @@ class PPOConfig:
     num_updates_per_batch: int = 4
     discounting: float = 0.97
     learning_rate: float = 3e-4
-    entropy_cost: float = 1e-2
+    entropy_cost: float = 0.01
     clipping_epsilon: float = 0.2
     num_envs: int = 8192
     batch_size: int = 256
